@@ -39,6 +39,8 @@ New hazard types go in `js/physics.js` (behaviour) and `js/scene.js` (looks).
 
 ## Adding styles
 
+Each style is a complete world, not just a colour swap: `env.build` picks the surroundings (distant mountains or skyline, vegetation, props, weather — see [`js/world.js`](js/world.js)), `env.ground` the ground texture and `env.cliff` the cliff shape (depth, rough or layered rock, with or without a top slab).
+
 Styles live in [`js/themes.js`](js/themes.js) (`skyFx` sets the sun/moon position, size and glow; the sky and clouds are drawn by [`js/sky.js`](js/sky.js)). Building patterns are painted in [`js/textures.js`](js/textures.js).
 
 ## Publishing an update

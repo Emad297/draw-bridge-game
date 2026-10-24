@@ -1,10 +1,11 @@
 // The 3D diorama: towers, car, ink, hazards, clouds, flag, confetti — plus the camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261024194841';
-import { mergeGeometries } from './vendor-bgu.js?v=20261024194841';
-import { Sky } from './sky.js?v=20261024194841';
-import { paintWall } from './textures.js?v=20261024194841';
-import { terrain, floorY } from './physics.js?v=20261024194841';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261024200358';
+import { mergeGeometries } from './vendor-bgu.js?v=20261024200358';
+import { Sky } from './sky.js?v=20261024200358';
+import { paintWall, paintGround } from './textures.js?v=20261024200358';
+import { buildWorld, fbm2 } from './world.js?v=20261024200358';
+import { terrain, floorY } from './physics.js?v=20261024200358';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp01 = x => Math.min(1, Math.max(0, x)), lerp = (a, b, t) => a + (b - a) * t;
@@ -21,6 +22,17 @@ function stripeTex(){ const cv = document.createElement('canvas'); cv.width = 25
 function worldBox(w, h, d, cx, cy, S = 4){ const g = new THREE.BoxGeometry(w, h, d), p = g.attributes.position, n = g.attributes.normal, uv = g.attributes.uv;
   for (let i = 0; i < p.count; i++){ const x = p.getX(i) + cx, y = p.getY(i) + cy, z = p.getZ(i); if (Math.abs(n.getZ(i)) > .5) uv.setXY(i, x / S, y / S); else if (Math.abs(n.getX(i)) > .5) uv.setXY(i, z / S, y / S); else uv.setXY(i, x / S, z / S); }
   return g; }
+// a cliff piece spanning z = zb..zf; rough styles get a bumpy, layered front/back (displacement is a function of world
+// position only, so neighbouring pieces and the edges between faces always line up)
+const CN = fbm2(5);
+function cliffBox(w, h, cx, cy, C){ const zf = C.zf ?? 2.5, zb = C.zb ?? -2.5, d = zf - zb, zc = (zf + zb) / 2, rough = C.rough || 0, S = 4;
+  const g = new THREE.BoxGeometry(w, h, d, rough ? Math.max(1, Math.round(w / .4)) : 1, rough ? Math.max(1, Math.round(h / .4)) : 1, rough ? Math.max(1, Math.round(d / 1)) : 1); g.translate(0, 0, zc);
+  const p = g.attributes.position, n = g.attributes.normal, uv = g.attributes.uv;
+  for (let i = 0; i < p.count; i++){ const x = p.getX(i) + cx, y = p.getY(i) + cy, z = p.getZ(i);
+    if (Math.abs(n.getZ(i)) > .5) uv.setXY(i, x / S, y / S); else if (Math.abs(n.getX(i)) > .5) uv.setXY(i, z / S, y / S); else uv.setXY(i, x / S, z / S);
+    if (rough){ const t = (z - zc) / (d / 2), wgt = Math.sign(t) * Math.pow(Math.abs(t), 6), led = C.ledges ? Math.pow((y / 1.3 % 1 + 1) % 1, 4) * 1.2 : 0;
+      p.setZ(i, z + wgt * ((CN(x * .3 + 50, y * .3 + 50) - .5) * 2.4 * rough + led * rough)); } }
+  if (rough) g.computeVertexNormals(); return g; }
 const RNG = s => () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 
 export class Diorama {
@@ -29,7 +41,7 @@ export class Diorama {
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
     const scene = this.scene = new THREE.Scene(); this.camera = new THREE.PerspectiveCamera(36, 9 / 16, 2, 400);
-    scene.fog = new THREE.Fog('#8fa8ff', 35, 110); this.hemi = new THREE.HemisphereLight('#eef2ff', '#6a5a7a', 1.3); scene.add(this.hemi); this.pm = new THREE.PMREMGenerator(r);
+    scene.fog = new THREE.Fog('#8fa8ff', 60, 330); this.ambient = []; this.hemi = new THREE.HemisphereLight('#eef2ff', '#6a5a7a', 1.3); scene.add(this.hemi); this.pm = new THREE.PMREMGenerator(r);
     const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
     this.levelG = new THREE.Group(); scene.add(this.levelG);
     this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
@@ -61,7 +73,7 @@ export class Diorama {
     this.scene.add(g, cab); this.car = { g, body, cab, cabBody, wheels, charred: false }; }
   resetCar(){ if (this.car?.charred) this.buildCar(this.theme.car); }
   charCar(){ if (this.car.charred) return; this.car.charred = true; for (const o of [this.car.g, this.car.cab, ...this.car.wheels]) o.traverse(m => { if (m.material){ m.material = m.material.clone(); m.material.color.multiplyScalar(.18); m.material.emissiveIntensity = 0; m.material.roughness = .95; } }); }
-  setTheme(T){ this.theme = T; ENV_I = T.env ?? .5; const r = this.renderer;
+  setTheme(T){ this.theme = T; ENV_I = T.envI ?? .5; const r = this.renderer;
     const cv = document.createElement('canvas'); cv.width = 4; cv.height = 512; const g = cv.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, T.sky[0]); gr.addColorStop(.55, T.sky[1]); gr.addColorStop(1, T.sky[2]); g.fillStyle = gr; g.fillRect(0, 0, 4, 512);
     this.sky.setTheme(T);
     const eq = new THREE.CanvasTexture(cv); eq.colorSpace = THREE.SRGBColorSpace; eq.mapping = THREE.EquirectangularReflectionMapping; if (this.env) this.env.dispose(); this.env = this.pm.fromEquirectangular(eq).texture; eq.dispose(); this.scene.environment = this.env;
@@ -69,83 +81,122 @@ export class Diorama {
     this.inkM.color.set(T.ink); this.inkM.emissive.set(T.inkGlow ? T.ink : '#000000'); this.inkM.emissiveIntensity = T.inkGlow ? 3 : 0;
     this.buildCar(T.car); if (this.level) this.setLevel(this.level); }
   wallMat(rx, ry){ const W = this.theme.wall, p = paintWall(this.theme), tex = c => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t; };
-    return mat(W.tint || '#ffffff', { map: tex(p.map), roughness: W.rough ?? .8, metalness: W.metal ?? 0, ...(p.emissive ? { emissiveMap: tex(p.emissive), emissive: '#ffffff', emissiveIntensity: 3 } : {}) }); }
+    return mat(W.tint || '#ffffff', { map: tex(p.map), bumpMap: tex(p.bump || p.map), bumpScale: W.bump ?? (p.bump ? 3 : 1.2), roughness: W.rough ?? .8, metalness: W.metal ?? 0, ...(p.emissive ? { emissiveMap: tex(p.emissive), emissive: '#ffffff', emissiveIntensity: 3 } : {}) }); }
   buildPen(){ const p = this.pen = new THREE.Group(), k = kit(); k.box(.22, 1.5, .22, '#1c1c22', 0, .95, 0, { r: .1 }).box(.24, .36, .24, '#ffcf1f', 0, 1.5, 0, { r: .1 }).box(.12, .25, .12, '#111', 0, .12, 0, { r: .04 }); k.into(p); p.rotation.z = -.35; p.rotation.x = .25; p.visible = false; this.scene.add(p); }
   buildConfetti(){ this.CONF = Array.from({ length: 120 }, (_, i) => ({ vx: Math.cos(i * 2.4) * (1 + i % 5 * .5), vz: Math.sin(i * 2.4) * (1 + i % 4 * .4), vy: 7 + (i % 7) * .9, rot: i, col: ['#ffcf1f', '#ff5a5a', '#46d38a', '#5aa0ff', '#ff7ae0', '#ffffff'][i % 6] }));
     const c = this.conf = new THREE.InstancedMesh(new THREE.BoxGeometry(.16, .02, .1), mat('#fff'), this.CONF.length); this.CONF.forEach((q, i) => c.setColorAt(i, new THREE.Color(q.col))); c.count = 0; this.scene.add(c); this.o3 = new THREE.Object3D(); }
   buildDebris(){ this.rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), mat('#888', { roughness: .9, flatShading: true }), 200); this.rocks.castShadow = true; this.rocks.count = 0;
     this.panels = new THREE.InstancedMesh(new THREE.BoxGeometry(2, 2, 1), mat('#888', { roughness: .5, metalness: .3 }), 40); this.panels.castShadow = true; this.panels.count = 0; this.scene.add(this.rocks, this.panels); }
-  buildFx(){ const geo = new THREE.IcosahedronGeometry(1, 0);
-    this.glow = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), 900); this.glow.count = 0;
-    this.smokeM = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, flatShading: true, transparent: true, opacity: .82, depthWrite: false }), 900); this.smokeM.count = 0;
+  // ---- particles: soft camera-facing billboards. Smoke/dust/snow blend normally and fade; fire/sparks glow additively.
+  buildFx(){
+    const VS = `attribute float aAlpha; attribute float aRot; varying vec2 vUv; varying float vA; varying vec3 vC;
+      void main(){ vUv = uv; vA = aAlpha;
+      #ifdef USE_INSTANCING_COLOR
+        vC = instanceColor;
+      #else
+        vC = vec3(1.0);
+      #endif
+        vec4 c = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0); float sx = length(instanceMatrix[0].xyz), sy = length(instanceMatrix[1].xyz);
+        vec4 mv = viewMatrix * c; float cs = cos(aRot), sn = sin(aRot); vec2 p = vec2(position.x * sx, position.y * sy); mv.xy += vec2(cs * p.x - sn * p.y, sn * p.x + cs * p.y); gl_Position = projectionMatrix * mv; }`;
+    const FS = `uniform sampler2D map; varying vec2 vUv; varying float vA; varying vec3 vC;
+      void main(){ vec4 t = texture2D(map, vUv); float a = t.a * vA; if (a < 0.004) discard; gl_FragColor = vec4(vC * t.rgb, a);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+      }`;
+    const tex = (fn) => { const N = 128, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d'), im = g.createImageData(N, N), f = fbm2(23);
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++){ const u = x / N - .5, v = y / N - .5, [r, gg, bb, a] = fn(u, v, f), i = (y * N + x) * 4; im.data[i] = r; im.data[i + 1] = gg; im.data[i + 2] = bb; im.data[i + 3] = a; }
+      g.putImageData(im, 0, 0); const t = new THREE.CanvasTexture(c); return t; };
+    // a wispy puff: soft falloff eaten by noise, lighter on top
+    const puff = tex((u, v, f) => { const d = Math.hypot(u, v) * 2, n = f(u * 6 + 9, v * 6 + 9, 4), a = Math.max(0, 1 - d) ** 1.6 * Math.min(1, Math.max(0, n * 1.9 - .45)); const sh = 205 + (-v + .5) * 50 + n * 20; return [sh, sh, sh, a * 255]; });
+    const flame = tex((u, v, f) => { const d = Math.hypot(u, v * .85) * 2, n = f(u * 5 + 3, v * 5 + 3, 3), a = Math.max(0, 1 - d) ** 1.5 * (.6 + n * .7); return [255, 255, 255, Math.min(255, a * 255)]; });
+    const mk = (map, N, additive) => { const geo = new THREE.PlaneGeometry(1, 1); geo.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(N), 1)); geo.setAttribute('aRot', new THREE.InstancedBufferAttribute(new Float32Array(N), 1));
+      const m = new THREE.InstancedMesh(geo, new THREE.ShaderMaterial({ uniforms: { map: { value: map } }, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, toneMapped: !additive }), N);
+      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3); m.count = 0; m.frustumCulled = false; m.renderOrder = additive ? 4 : 3; return m; };
+    this.smokeB = mk(puff, 1400, false); this.fireB = mk(flame, 1200, true);
     const hc = document.createElement('canvas'); hc.width = hc.height = 128; const hg = hc.getContext('2d'), gr = hg.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.25, 'rgba(255,255,255,.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); hg.fillStyle = gr; hg.fillRect(0, 0, 128, 128);
-    this.halo = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(hc), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false }), 1000); this.halo.count = 0; this.halo.renderOrder = 5;
-    this.glow.frustumCulled = this.smokeM.frustumCulled = this.halo.frustumCulled = false; this.scene.add(this.glow, this.smokeM, this.halo);
+    this.halo = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(hc), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, fog: false }), 400); this.halo.count = 0; this.halo.renderOrder = 5; this.halo.frustumCulled = false;
+    this.scene.add(this.smokeB, this.fireB, this.halo);
     this.flash = new THREE.PointLight('#ffb060', 0, 16, 1.5); this.scene.add(this.flash); this.parts = []; this.rng = RNG(99); this.fxT = null; this.col = new THREE.Color(); }
-  // particle helpers: kind 0 = glowing (fire, sparks), 1 = smoke/dust
-  emit(n, f){ for (let i = 0; i < n && this.parts.length < 1700; i++){ const r = this.rng, p = f(r); p.age = 0; this.parts.push(p); } }
-  fire(x, y, n, big = 1){ this.emit(n, r => ({ k: 0, fire: true, x: x + (r() - .5) * .5 * big, y: y + (r() - .3) * .3 * big, z: (r() - .5) * .6 * big, vx: (r() - .5) * .8, vy: 1.2 + r() * 2.2 * big, vz: (r() - .5) * .6, g: -1, life: .45 + r() * .5, s: (.12 + r() * .16) * big })); }
-  smoke(x, y, n, c = .25, big = 1){ this.emit(n, r => ({ k: 1, x: x + (r() - .5) * .4, y, z: (r() - .5) * .6, vx: (r() - .5) * .6 + .25, vy: .7 + r() * 1.2, vz: (r() - .5) * .4, g: -.3, life: 1.6 + r() * 1.6, s: (.16 + r() * .2) * big, grow: 2.6, c: c + r() * .08 })); }
-  sparks(x, y, n, sp = 7){ this.emit(n, r => { const a = r() * Math.PI * 2, v = sp * (.3 + r()); return { k: 0, x, y, z: (r() - .5) * .3, vx: Math.cos(a) * v, vy: Math.sin(a) * v + 2, vz: (r() - .5) * 3, g: 14, life: .3 + r() * .5, s: .035 + r() * .03, spark: true }; }); }
-  dust(x, y, n, big = 1){ const c = new THREE.Color(this.theme.cap.color).lerp(new THREE.Color('#9a8d80'), .5); this.emit(n, r => ({ k: 1, x: x + (r() - .5) * .8, y: y + (r() - .5) * .4, z: (r() - .5) * 2.5, vx: (r() - .5) * 2.4 * big, vy: r() * 1.6 * big, vz: (r() - .5) * 1.5, g: 1.2, life: .9 + r() * 1.2, s: (.12 + r() * .18) * big, grow: 2.2, rgb: c })); }
-  boom(x, y){ this.flashT = 0; this.flash.position.set(x, y + .6, 2.2); this.fire(x, y + .2, 70, 2.6); this.sparks(x, y, 70, 11); this.smoke(x, y + .5, 45, .12, 2.4);
-    this.emit(30, r => { const a = r() * Math.PI * 2, v = 3 + r() * 5; return { k: 0, fire: true, x, y: y + .3, z: (r() - .5), vx: Math.cos(a) * v, vy: Math.sin(a) * v * .6 + 2, vz: (r() - .5) * 3, g: 2, life: .35 + r() * .35, s: .35 + r() * .3 }; }); }
-  // turn simulation events into particles
+  // kinds: 0 = glowing (fire, sparks, fireflies), 1 = soft (smoke, dust, snow, pollen)
+  emit(n, f){ for (let i = 0; i < n && this.parts.length < 2400; i++){ const r = this.rng, p = f(r); p.age = 0; p.rot ??= r() * 6.28; p.vr ??= (r() - .5) * 1.2; this.parts.push(p); } }
+  fire(x, y, n, big = 1){ this.emit(n, r => ({ k: 0, fire: true, x: x + (r() - .5) * .45 * big, y: y + (r() - .3) * .25 * big, z: (r() - .5) * .5 * big, vx: (r() - .5) * .7, vy: 1.4 + r() * 2 * big, vz: (r() - .5) * .5, g: -1.2, life: .4 + r() * .45, s: (.35 + r() * .35) * big })); }
+  smoke(x, y, n, c = .3, big = 1, a = .3){ this.emit(n, r => ({ k: 1, x: x + (r() - .5) * .4, y, z: (r() - .5) * .6, vx: (r() - .5) * .5 + .3, vy: .6 + r() * 1.1, vz: (r() - .5) * .4, g: -.25, life: 2.2 + r() * 2, s: (.5 + r() * .4) * big, grow: 3.2, c: c + r() * .06, a })); }
+  sparks(x, y, n, sp = 7){ this.emit(n, r => { const a = r() * Math.PI * 2, v = sp * (.3 + r()); return { k: 0, x, y, z: (r() - .5) * .3, vx: Math.cos(a) * v, vy: Math.sin(a) * v + 2, vz: (r() - .5) * 3, g: 14, life: .3 + r() * .5, s: .07 + r() * .05, spark: true }; }); }
+  dust(x, y, n, big = 1){ const c = new THREE.Color(this.theme.cap.color).lerp(new THREE.Color('#a89a88'), .5); this.emit(n, r => ({ k: 1, x: x + (r() - .5) * .8, y: y + (r() - .5) * .4, z: (r() - .5) * 2.5, vx: (r() - .5) * 2.2 * big, vy: r() * 1.4 * big, vz: (r() - .5) * 1.5, g: 1, life: 1.4 + r() * 1.4, s: (.45 + r() * .4) * big, grow: 2.6, rgb: c, a: .38 })); }
+  boom(x, y){ this.flashT = 0; this.flash.position.set(x, y + .6, 2.2); this.fire(x, y + .2, 60, 2.4); this.sparks(x, y, 60, 11); this.smoke(x, y + .5, 34, .1, 2.2, .55);
+    this.emit(26, r => { const a = r() * Math.PI * 2, v = 3 + r() * 5; return { k: 0, fire: true, x, y: y + .3, z: (r() - .5), vx: Math.cos(a) * v, vy: Math.sin(a) * v * .6 + 2, vz: (r() - .5) * 3, g: 2, life: .35 + r() * .35, s: .8 + r() * .6 }; }); }
   fx(evs){ for (const e of evs){ const [k, a, b, c, d, f] = e;
     if (k === 'boom'){ this.boom(a, b); this.charCar(); }
-    if (k === 'crumble'){ this.dust(a, b, 10, .8 + c); }
+    if (k === 'crumble'){ this.dust(a, b, 9, .8 + c); }
     if (k === 'spark') this.sparks(a, b, 8);
-    if (k === 'dent'){ this.sparks(b, c, 5, 5); this.smoke(b, c, 3, .3); }
-    if (k === 'snap'){ this.dust(a, b, 4, .5); this.sparks(a, b, 4, 3); }
-    if (k === 'partoff'){ this.smoke(a, b, 8, .25); this.sparks(a, b, 10, 6); }
-    if (k === 'shot') this.smoke(a, b + .9, 3, .55, .7);
-    if (k === 'hit' && (a === 'rock' || b === 'rock' || a === 'stone' && b === 'metal' || a === 'metal' && b === 'stone') && c > 3.5) this.dust(d, f, 2, .6); } }
+    if (k === 'dent'){ this.sparks(b, c, 5, 5); this.smoke(b, c, 2, .3); }
+    if (k === 'snap'){ this.dust(a, b, 3, .5); this.sparks(a, b, 4, 3); }
+    if (k === 'partoff'){ this.smoke(a, b, 5, .25); this.sparks(a, b, 10, 6); }
+    if (k === 'shot') this.smoke(a, b + .9, 2, .6, .7, .25);
+    if (k === 'hit' && (a === 'rock' || b === 'rock' || a === 'stone' && b === 'metal' || a === 'metal' && b === 'stone') && c > 3.5) this.dust(d, f, 1, .6); } }
+  // weather and chimneys: emitted all the time around the camera
+  ambientFx(dt){ const r = this.rng, c = this.camState ? this.camState.tgt : V(0, 0, 0), top = this.level ? Math.max(...this.level.solids.map(s => s[2])) : 0, fy = this.floor ?? top - 9;
+    for (const a of this.ambient){
+      if (a.type === 'snow' && r() < dt * 40) this.emit(Math.ceil(dt * 40), r => ({ k: 1, x: c.x + (r() - .5) * 34, y: top + 12, z: -6 + r() * 14, vx: .3, vy: -1.1 - r() * .5, vz: 0, g: 0, life: 9, s: .06 + r() * .06, grow: 0, c: 1, a: .9, snow: true }));
+      if (a.type === 'pollen' && r() < dt * 5) this.emit(1, r => ({ k: 1, x: c.x + (r() - .5) * 30, y: fy + 1 + r() * 12, z: -4 + r() * 10, vx: .25, vy: .05, vz: 0, g: 0, life: 7, s: .035, grow: 0, rgb: new THREE.Color('#fff7d0'), a: .9, snow: true }));
+      if (a.type === 'dust' && r() < dt * 4) this.emit(1, r => ({ k: 1, x: c.x - 18, y: fy + .3 + r() * 3, z: -6 + r() * 12, vx: 2 + r(), vy: .1, vz: 0, g: 0, life: 14, s: .9 + r(), grow: 1.5, rgb: new THREE.Color('#d8a070'), a: .12 }));
+      if (a.type === 'fireflies' && r() < dt * 3) this.emit(1, r => ({ k: 0, fly: true, x: c.x + (r() - .5) * 26, y: fy + .5 + r() * 5, z: -3 + r() * 8, vx: (r() - .5) * .4, vy: (r() - .5) * .2, vz: 0, g: 0, life: 4 + r() * 3, s: .12 }));
+      if (a.type === 'chimney' && r() < dt * 3) this.emit(1, r => ({ k: 1, x: a.p[0], y: a.p[1], z: a.p[2], vx: 1.2 + r() * .4, vy: 1.6 + r() * .5, vz: 0, g: -.05, life: 9, s: 1.4, grow: 5, c: .78, a: .3 })); } }
   stepFx(dt, st){
     // continuous emitters: a hurt car smokes, a dying car burns
     if (st){ const [x, y, a] = st.car, hx = x + Math.cos(a) * .7 - Math.sin(a) * .2, hy = y + Math.sin(a) * .7 + Math.cos(a) * .2;
-      if (st.hp < 70 && !st.exploded && this.rng() < dt * (70 - st.hp) / 6) this.smoke(hx, hy, 1, st.hp < 40 ? .12 : .4);
-      if (st.fire && !st.exploded) this.fire(hx, hy, Math.ceil(dt * 50));
-      if (st.exploded){ const age = st.t - (this.boomAt ??= st.t), rate = Math.max(0, 1 - age / 9); if (this.rng() < rate) this.fire(x, y + .1, Math.ceil(dt * 45 * rate), 1.3); if (this.rng() < dt * 8 * rate) this.smoke(x, y + .6, 1, .08, 1.6); } }
+      if (st.hp < 70 && !st.exploded && this.rng() < dt * (70 - st.hp) / 8) this.smoke(hx, hy, 1, st.hp < 40 ? .15 : .45, .7, .26);
+      if (st.fire && !st.exploded) this.fire(hx, hy, Math.ceil(dt * 30));
+      if (st.exploded){ const age = st.t - (this.boomAt ??= st.t), rate = Math.max(0, 1 - age / 9); if (this.rng() < rate) this.fire(x, y + .1, Math.ceil(dt * 28 * rate), 1.2); if (this.rng() < dt * 5 * rate) this.smoke(x, y + .7, 1, .12, 1.3, .32); } }
     else this.boomAt = null;
-    const P = this.parts; for (let i = P.length - 1; i >= 0; i--){ const p = P[i]; p.age += dt; if (p.age > p.life){ P[i] = P[P.length - 1]; P.pop(); continue; }
-      p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; if (this.floor != null && p.y < this.floor + .05 && p.spark){ p.y = this.floor + .05; p.vy *= -.3; } }
+    this.ambientFx(dt);
+    const P = this.parts; for (let i = P.length - 1; i >= 0; i--){ const p = P[i]; p.age += dt; if (p.age > p.life || (p.snow && this.floor != null && p.y < this.floor)){ P[i] = P[P.length - 1]; P.pop(); continue; }
+      p.vy -= p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.rot += p.vr * dt; if (p.snow) p.x += Math.sin(p.age * 2 + p.rot) * dt * .4;
+      if (this.floor != null && p.y < this.floor + .05 && p.spark){ p.y = this.floor + .05; p.vy *= -.3; } }
     if (this.flashT != null){ this.flashT += dt; this.flash.intensity = Math.max(0, 900 * Math.exp(-this.flashT * 7)); if (this.flashT > 1.5) this.flashT = null; } else this.flash.intensity = 0;
-    const o3 = this.o3, col = this.col, hq = this.camera.quaternion; let ng = 0, ns = 0, nh = 0;
-    const halo = (x, y, z, size, r, g, b) => { if (nh >= 1000) return; o3.position.set(x, y, z + .05); o3.quaternion.copy(hq); o3.scale.setScalar(size); o3.updateMatrix(); this.halo.setMatrixAt(nh, o3.matrix); col.setRGB(r, g, b); this.halo.setColorAt(nh++, col); };
+    const o3 = this.o3, col = this.col, hq = this.camera.quaternion, SB = this.smokeB, FB = this.fireB, sA = SB.geometry.attributes.aAlpha.array, sR = SB.geometry.attributes.aRot.array, fA = FB.geometry.attributes.aAlpha.array, fR = FB.geometry.attributes.aRot.array;
+    let nf = 0, ns = 0, nh = 0;
+    const halo = (x, y, z, size, r, g, b) => { if (nh >= 400) return; o3.position.set(x, y, z + .05); o3.quaternion.copy(hq); o3.scale.setScalar(size); o3.updateMatrix(); this.halo.setMatrixAt(nh, o3.matrix); col.setRGB(r, g, b); this.halo.setColorAt(nh++, col); };
+    const put = (M, i, x, y, z, sx, sy) => { o3.position.set(x, y, z); o3.quaternion.identity(); o3.scale.set(sx, sy, 1); o3.updateMatrix(); M.setMatrixAt(i, o3.matrix); };
     if (this.flashT != null && this.flashT < .9){ const k = Math.exp(-this.flashT * 5); halo(this.flash.position.x, this.flash.position.y, 1, 9 + this.flashT * 8, k, k * .7, k * .4); }
     for (const p of P){ const u = p.age / p.life;
-      if (p.k === 0){ const sc = p.spark ? p.s : p.s * (u < .2 ? .5 + u * 2.5 : 1 - (u - .2) / .8 * .8); o3.position.set(p.x, p.y, p.z); o3.quaternion.identity(); o3.rotation.set(p.age * 3, p.age * 2, 0);
-        if (p.spark){ const sp = Math.hypot(p.vx, p.vy); o3.scale.set(p.s, p.s + sp * .012, p.s); o3.rotation.set(0, 0, Math.atan2(p.vy, p.vx) - Math.PI / 2); } else o3.scale.setScalar(sc);
-        o3.updateMatrix(); this.glow.setMatrixAt(ng, o3.matrix);
-        if (p.spark) col.setRGB(6, 3.2, 1.2); else if (u < .25) col.setRGB(7, 5.2, 2.4); else if (u < .6) col.setRGB(5, 1.9, .45); else col.setRGB(1.6 * (1 - u) + .1, .35 * (1 - u), .1 * (1 - u));
-        this.glow.setColorAt(ng++, col); if (p.spark) halo(p.x, p.y, p.z, .35, .5, .3, .1); else if (u < .7) halo(p.x, p.y, p.z, sc * 4.5, .22 * (1 - u), .12 * (1 - u), .03); }
-      else { const sc = p.s * (1 + u * p.grow) * (u > .75 ? 1 - (u - .75) / .25 : 1); o3.position.set(p.x, p.y, p.z); o3.rotation.set(p.age, p.age * .7, 0); o3.scale.setScalar(Math.max(.001, sc)); o3.updateMatrix(); this.smokeM.setMatrixAt(ns, o3.matrix);
-        if (p.rgb) col.copy(p.rgb); else col.setRGB(p.c, p.c, p.c * 1.05); this.smokeM.setColorAt(ns++, col); } }
-    this.glow.count = ng; this.smokeM.count = ns; this.halo.count = nh; for (const m of [this.glow, this.smokeM, this.halo]){ m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; } }
+      if (p.k === 0){ if (nf >= 1200) continue;
+        if (p.spark){ const sp = Math.hypot(p.vx, p.vy); put(FB, nf, p.x, p.y, p.z, p.s * 1.6, p.s * 1.6 + sp * .035); fR[nf] = Math.atan2(p.vy, p.vx) - Math.PI / 2; fA[nf] = 1 - u; col.setRGB(5, 2.6, 1); }
+        else if (p.fly){ const tw = .5 + .5 * Math.sin(p.age * 5 + p.rot * 3); put(FB, nf, p.x, p.y, p.z, p.s, p.s); fR[nf] = 0; fA[nf] = tw * Math.min(1, (1 - u) * 3); col.setRGB(1.6, 2.2, .6); if (tw > .6) halo(p.x, p.y, p.z, .6, .1 * tw, .14 * tw, .03); }
+        else { const sc = p.s * (u < .2 ? .6 + u * 2 : 1 - (u - .2) * .7); put(FB, nf, p.x, p.y, p.z, sc, sc * 1.25); fR[nf] = p.rot * .3; fA[nf] = Math.min(1, (1 - u) * 1.6);
+          if (u < .25) col.setRGB(3.2, 2.5, 1.3); else if (u < .6) col.setRGB(2.6, 1.1, .3); else col.setRGB(1.1 * (1 - u) + .15, .3 * (1 - u), .08); if (u < .5) halo(p.x, p.y, p.z, sc * 2.4, .12 * (1 - u), .06 * (1 - u), .015); }
+        FB.setColorAt(nf++, col); }
+      else { if (ns >= 1400) continue; const sc = p.s * (1 + u * p.grow); put(SB, ns, p.x, p.y, p.z, sc, sc); sR[ns] = p.rot;
+        sA[ns] = p.a * Math.min(1, u / .08) * Math.pow(1 - u, p.snow ? .2 : 1.4); if (p.rgb) col.copy(p.rgb); else col.setRGB(p.c, p.c, p.c * 1.03); SB.setColorAt(ns++, col); } }
+    SB.count = ns; FB.count = nf; this.halo.count = nh;
+    for (const m of [SB, FB, this.halo]){ m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
+    for (const m of [SB, FB]){ m.geometry.attributes.aAlpha.needsUpdate = m.geometry.attributes.aRot.needsUpdate = true; } }
   clearFx(){ this.parts.length = 0; this.flashT = null; this.boomAt = null; }
   // the ground fades out toward the horizon so it melts into the sky instead of ending in a hard line
   groundFade(){ if (this._fade) return this._fade; const c = document.createElement('canvas'); c.width = 4; c.height = 256; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
-    gr.addColorStop(0, '#000'); gr.addColorStop(.45, '#000'); gr.addColorStop(.72, '#fff'); gr.addColorStop(1, '#fff'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256); return this._fade = new THREE.CanvasTexture(c); }
+    gr.addColorStop(0, '#000'); gr.addColorStop(.12, '#000'); gr.addColorStop(.32, '#fff'); gr.addColorStop(1, '#fff'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256); return this._fade = new THREE.CanvasTexture(c); }
   setLevel(L){
     this.level = L; const G = this.levelG; while (G.children.length) G.remove(G.children[0]);
     const T = this.theme, C = T.cap, wall = this.wallMat(1, 1), capM = mat(C.color, { roughness: C.rough ?? .7, metalness: C.metal ?? 0, ...(C.glow ? { emissive: C.glow, emissiveIntensity: 3 } : {}) });
     const piece = (geo, m, x, y, z = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; return o; };
     this.blockMeshes = [];
+    const E = T.env || {}, CL = E.cliff || {}, useCap = CL.cap !== false, zf = CL.zf ?? 2.5, zb = CL.zb ?? -2.5, capD = zf - zb + .4, capZ = (zf + zb) / 2;
+    const fy = floorY(L); this.floor = fy;
     for (const t of terrain(L)){
       // Cliff pieces never share a face: the stone under a cap stops exactly where the cap begins, and caps on the open
       // edges stick out a little as a lip. (Stone and cap used to overlap with flush sides, which flickered on phones.)
-      const CAP = .34;
-      for (const c of t.core){ const x0 = Math.max(c.x0, -45), x1 = Math.min(c.x1, 45), y0 = Math.max(c.y0, t.top - 40), y1 = c.cap ? c.y1 - CAP : c.y1, w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-        G.add(piece(worldBox(w, h, 5, cx, cy), wall, cx, cy)); if (c.cap) G.add(piece(new THREE.BoxGeometry(w - .004, CAP, 5.4), capM, cx, t.top - CAP / 2)); }
+      const CAP = useCap ? .34 : 0, bottom = fy != null ? fy - 1 : t.top - 40;
+      for (const c of t.core){ const x0 = Math.max(c.x0, -40), x1 = Math.min(c.x1, 40), y0 = Math.max(c.y0, bottom), y1 = c.cap ? c.y1 - CAP : c.y1, w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+        if (h <= 0) continue; G.add(piece(cliffBox(w, h, cx, cy, CL), wall, cx, cy)); if (c.cap && CAP) G.add(piece(new THREE.BoxGeometry(w - .004, CAP, capD), capM, cx, t.top - CAP / 2, capZ)); }
       for (const b of t.blocks){ const g = new THREE.Group(); g.position.set(b.x, b.y, 0);
-        const sh = b.top ? b.h - CAP : b.h, sy = b.top ? -CAP / 2 : 0; g.add(piece(worldBox(b.w, sh, 5, b.x, b.y + sy), wall, 0, sy));
-        if (b.top){ const lipL = t.openL && Math.abs(b.x - b.w / 2 - t.x0) < 1e-3 ? .12 : 0, lipR = t.openR && Math.abs(b.x + b.w / 2 - t.x1) < 1e-3 ? .12 : 0;
-          g.add(piece(new THREE.BoxGeometry(b.w - .004 + lipL + lipR, CAP, 5.4), capM, (lipR - lipL) / 2, b.h / 2 - CAP / 2)); }
+        const sh = b.top ? b.h - CAP : b.h, sy = b.top ? -CAP / 2 : 0; g.add(piece(cliffBox(b.w, sh, b.x, b.y + sy, CL), wall, 0, sy));
+        if (b.top && CAP){ const lipL = t.openL && Math.abs(b.x - b.w / 2 - t.x0) < 1e-3 ? .12 : 0, lipR = t.openR && Math.abs(b.x + b.w / 2 - t.x1) < 1e-3 ? .12 : 0;
+          g.add(piece(new THREE.BoxGeometry(b.w - .004 + lipL + lipR, CAP, capD), capM, (lipR - lipL) / 2, b.h / 2 - CAP / 2, capZ)); }
         G.add(g); this.blockMeshes.push(g); } }
-    const fy = floorY(L); this.floor = fy;
-    if (fy != null){ const gc = new THREE.Color(T.wall.colors[0]).lerp(new THREE.Color('#5d5044'), .55).multiplyScalar(.75), fl = piece(new THREE.PlaneGeometry(500, 220), mat(gc, { roughness: .95, transparent: true, alphaMap: this.groundFade() }), 0, fy, -70); fl.rotation.x = -Math.PI / 2; fl.castShadow = false; G.add(fl);
-      const rm = mat(gc.clone().multiplyScalar(.75), { roughness: .9, flatShading: true }), rr = RNG(7);
-      for (let i = 0; i < 40; i++){ const r = .2 + rr() * .7, m = piece(new THREE.DodecahedronGeometry(r, 0), rm, (rr() - .5) * 50, fy + r * .3, -10 + rr() * 13); m.rotation.set(rr() * 3, rr() * 3, 0); m.scale.y = .6; G.add(m); } }
+    if (fy != null){ const gp = paintGround(E.ground || 'grass'), tx = (c, srgb) => { const t = new THREE.CanvasTexture(c); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(600 / 7, 340 / 7); t.anisotropy = 8; return t; };
+      const gm = mat('#ffffff', { map: tx(gp.map, true), bumpMap: tx(gp.bump), bumpScale: 2, roughness: .95, transparent: true, alphaMap: this.groundFade(), ...(gp.emissive ? { emissiveMap: tx(gp.emissive, true), emissive: '#ffffff', emissiveIntensity: 2.5 } : {}) });
+      const fl = piece(new THREE.PlaneGeometry(600, 340), gm, 0, fy, -130); fl.rotation.x = -Math.PI / 2; fl.castShadow = false; G.add(fl);
+      const wd = buildWorld(T, L, terrain(L), fy, [zf, zb], this.scene.fog.color); G.add(wd.group); this.ambient = wd.ambient; } else this.ambient = [];
     // flag
     const f = new THREE.Group(), k = kit(); k.box(.09, 2.6, .09, '#222', 0, 1.3, 0, { r: .03 }).box(.3, .12, .3, '#222', 0, .06, 0); k.into(f);
     const cloth = new THREE.Mesh(new THREE.PlaneGeometry(1.3, .9, 12, 4), mat(this.theme.flag, { side: THREE.DoubleSide, roughness: .8 })); cloth.position.set(.7, 2.1, 0); f.add(cloth); f.position.set(L.flag[0], L.flag[1], 0); G.add(f);

@@ -1,1 +1,1 @@
-export { mergeGeometries } from '../vendor/addons/BufferGeometryUtils.js?v=20261024194841';
+export { mergeGeometries } from '../vendor/addons/BufferGeometryUtils.js?v=20261024200358';
