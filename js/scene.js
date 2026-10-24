@@ -1,9 +1,10 @@
 // The 3D diorama: towers, car, ink, hazards, clouds, flag, confetti — plus the camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js';
-import { mergeGeometries } from './vendor-bgu.js';
-import { paintWall } from './textures.js';
-import { terrain, floorY } from './physics.js';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261024194841';
+import { mergeGeometries } from './vendor-bgu.js?v=20261024194841';
+import { Sky } from './sky.js?v=20261024194841';
+import { paintWall } from './textures.js?v=20261024194841';
+import { terrain, floorY } from './physics.js?v=20261024194841';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp01 = x => Math.min(1, Math.max(0, x)), lerp = (a, b, t) => a + (b - a) * t;
@@ -33,19 +34,13 @@ export class Diorama {
     this.levelG = new THREE.Group(); scene.add(this.levelG);
     this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
     this.cyl = new THREE.CylinderGeometry(.09, .09, 1, 10); this.cap = new THREE.SphereGeometry(.09, 10, 8);
-    this.buildClouds(); this.buildStars(); this.buildPen(); this.buildConfetti();
+    this.sky = new Sky(scene); this.buildPen(); this.buildConfetti();
     this.plane = new THREE.Plane(V(0, 0, 1), 0); this.ray = new THREE.Raycaster();
     this.buildFx(); this.buildDebris();
     this.camState = null; if (theme) this.setTheme(theme);
   }
   size(w, h, pr = Math.min(window.devicePixelRatio || 1, 2)){ this.renderer.setPixelRatio(pr); this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.W = w; this.H = h; }
   // ---------------- world pieces
-  buildClouds(){ const m = this.cloudM = mat('#ffffff', { roughness: .95 }); this.clouds = [];
-    for (let i = 0; i < 16; i++){ const g = new THREE.Group(), r = k => Math.abs(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1;
-      for (let k = 0; k < 4; k++){ const s = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), m); s.position.set(k * 1.1 - 1.6, Math.sin(k * 2) * .3, 0); s.scale.set(1.2 + r(k) * .6, .8 + r(k + 5) * .4, .9); g.add(s); }
-      const below = i < 8; g.position.set((r(1) - .5) * 50, below ? 1 + r(2) * 8 : 5 + r(2) * 16, below ? -14 - r(3) * 10 : -20 - r(3) * 22); g.scale.setScalar(below ? .9 + r(4) : 1.4 + r(4)); this.scene.add(g); this.clouds.push({ g, x0: g.position.x, v: .2 + r(6) * .3 }); } }
-  buildStars(){ const n = 500, p = new Float32Array(n * 3), r = k => Math.abs(Math.sin(k * 91.17) * 43758.5453) % 1; for (let i = 0; i < n; i++){ p[i * 3] = (r(i) - .5) * 260; p[i * 3 + 1] = -20 + r(i + 999) * 120; p[i * 3 + 2] = -90 - r(i + 77) * 30; }
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); this.stars = new THREE.Points(g, new THREE.PointsMaterial({ color: '#ffffff', size: .5, fog: false, transparent: true, opacity: .9 })); this.scene.add(this.stars); }
   buildCar(C){ if (this.car){ this.scene.remove(this.car.g); this.car.wheels.forEach(w => this.scene.remove(w)); }
     if (this.car) this.scene.remove(this.car.cab);
     const g = new THREE.Group(), body = new THREE.Group(), cab = new THREE.Group(), cabBody = new THREE.Group(); g.add(body); cab.add(cabBody); const kc = kit(), ku = kit(), B = C.body, Gl = C.glass, T = C.trim;
@@ -68,10 +63,9 @@ export class Diorama {
   charCar(){ if (this.car.charred) return; this.car.charred = true; for (const o of [this.car.g, this.car.cab, ...this.car.wheels]) o.traverse(m => { if (m.material){ m.material = m.material.clone(); m.material.color.multiplyScalar(.18); m.material.emissiveIntensity = 0; m.material.roughness = .95; } }); }
   setTheme(T){ this.theme = T; ENV_I = T.env ?? .5; const r = this.renderer;
     const cv = document.createElement('canvas'); cv.width = 4; cv.height = 512; const g = cv.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 512); gr.addColorStop(0, T.sky[0]); gr.addColorStop(.55, T.sky[1]); gr.addColorStop(1, T.sky[2]); g.fillStyle = gr; g.fillRect(0, 0, 4, 512);
-    const bg = new THREE.CanvasTexture(cv); bg.colorSpace = THREE.SRGBColorSpace; if (this.scene.background) this.scene.background.dispose(); this.scene.background = bg;
+    this.sky.setTheme(T);
     const eq = new THREE.CanvasTexture(cv); eq.colorSpace = THREE.SRGBColorSpace; eq.mapping = THREE.EquirectangularReflectionMapping; if (this.env) this.env.dispose(); this.env = this.pm.fromEquirectangular(eq).texture; eq.dispose(); this.scene.environment = this.env;
-    this.scene.fog.color.set(T.fog); this.hemi.color.set(T.hemi[0]); this.hemi.groundColor.set(T.hemi[1]); this.hemi.intensity = T.hemi[2]; this.sun.color.set(T.sun[0]); this.sun.intensity = T.sun[1]; r.toneMappingExposure = T.exposure ?? 1.05;
-    this.cloudM.color.set(T.cloud); this.cloudM.envMapIntensity = .3; this.stars.visible = !!T.stars;
+     this.hemi.color.set(T.hemi[0]); this.hemi.groundColor.set(T.hemi[1]); this.hemi.intensity = T.hemi[2]; this.sun.color.set(T.sun[0]); this.sun.intensity = T.sun[1]; r.toneMappingExposure = T.exposure ?? 1.05; this.scene.fog.color.copy(this.sky.fogColor());
     this.inkM.color.set(T.ink); this.inkM.emissive.set(T.inkGlow ? T.ink : '#000000'); this.inkM.emissiveIntensity = T.inkGlow ? 3 : 0;
     this.buildCar(T.car); if (this.level) this.setLevel(this.level); }
   wallMat(rx, ry){ const W = this.theme.wall, p = paintWall(this.theme), tex = c => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t; };
@@ -129,6 +123,9 @@ export class Diorama {
         if (p.rgb) col.copy(p.rgb); else col.setRGB(p.c, p.c, p.c * 1.05); this.smokeM.setColorAt(ns++, col); } }
     this.glow.count = ng; this.smokeM.count = ns; this.halo.count = nh; for (const m of [this.glow, this.smokeM, this.halo]){ m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; } }
   clearFx(){ this.parts.length = 0; this.flashT = null; this.boomAt = null; }
+  // the ground fades out toward the horizon so it melts into the sky instead of ending in a hard line
+  groundFade(){ if (this._fade) return this._fade; const c = document.createElement('canvas'); c.width = 4; c.height = 256; const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, '#000'); gr.addColorStop(.45, '#000'); gr.addColorStop(.72, '#fff'); gr.addColorStop(1, '#fff'); g.fillStyle = gr; g.fillRect(0, 0, 4, 256); return this._fade = new THREE.CanvasTexture(c); }
   setLevel(L){
     this.level = L; const G = this.levelG; while (G.children.length) G.remove(G.children[0]);
     const T = this.theme, C = T.cap, wall = this.wallMat(1, 1), capM = mat(C.color, { roughness: C.rough ?? .7, metalness: C.metal ?? 0, ...(C.glow ? { emissive: C.glow, emissiveIntensity: 3 } : {}) });
@@ -146,7 +143,7 @@ export class Diorama {
           g.add(piece(new THREE.BoxGeometry(b.w - .004 + lipL + lipR, CAP, 5.4), capM, (lipR - lipL) / 2, b.h / 2 - CAP / 2)); }
         G.add(g); this.blockMeshes.push(g); } }
     const fy = floorY(L); this.floor = fy;
-    if (fy != null){ const gc = new THREE.Color(T.wall.colors[0]).lerp(new THREE.Color('#5d5044'), .55).multiplyScalar(.75), fl = piece(new THREE.BoxGeometry(160, 10, 60), mat(gc, { roughness: .95 }), 0, fy - 5, -14); G.add(fl);
+    if (fy != null){ const gc = new THREE.Color(T.wall.colors[0]).lerp(new THREE.Color('#5d5044'), .55).multiplyScalar(.75), fl = piece(new THREE.PlaneGeometry(500, 220), mat(gc, { roughness: .95, transparent: true, alphaMap: this.groundFade() }), 0, fy, -70); fl.rotation.x = -Math.PI / 2; fl.castShadow = false; G.add(fl);
       const rm = mat(gc.clone().multiplyScalar(.75), { roughness: .9, flatShading: true }), rr = RNG(7);
       for (let i = 0; i < 40; i++){ const r = .2 + rr() * .7, m = piece(new THREE.DodecahedronGeometry(r, 0), rm, (rr() - .5) * 50, fy + r * .3, -10 + rr() * 13); m.rotation.set(rr() * 3, rr() * 3, 0); m.scale.y = .6; G.add(m); } }
     // flag
@@ -215,7 +212,6 @@ export class Diorama {
     this.rocks.material.color.set(this.theme.wall.colors[0]); this.panels.material.color.set(this.car.charred ? '#2a2522' : this.theme.car.body);
     if (opts.events) this.fx(opts.events); this.stepFx(dt, st);
     for (let i = 0; i < this.cloth.geometry.attributes.position.count; i++){ const x = this.clothBase[i * 3] + .65; this.cloth.geometry.attributes.position.setZ(i, Math.sin(x * 4 - t * 6) * .12 * x); } this.cloth.geometry.attributes.position.needsUpdate = true;
-    this.clouds.forEach(c => c.g.position.x = c.x0 + Math.sin(t * .05 + c.v * 9) * 3 + t * c.v * .4);
     const simT = st ? st.t : 0;
     this.hz.forEach((o, i) => { const h = o.h, hs = st && st.hazards[i];
       if (h.type === 'spinner'){ o.s.rotation.z = hs ? hs.spin : 0; let n = 0; if (hs) for (const b of hs.bullets){ if (b[3] > 3.2) continue; o3.position.set(b[0], b[1], 0); o3.rotation.set(0, 0, b[2]); o3.scale.setScalar(1); o3.updateMatrix(); o.bul.setMatrixAt(n++, o3.matrix); } o.bul.count = n; o.bul.instanceMatrix.needsUpdate = true; }
@@ -224,6 +220,7 @@ export class Diorama {
     if (opts.winAt != null && simT > opts.winAt){ const q = simT - opts.winAt; this.conf.count = this.CONF.length; this.CONF.forEach((c, i) => { o3.position.set(L.flag[0] - .4 + c.vx * q, L.flag[1] + 2.4 + c.vy * q - 5 * q * q, c.vz * q); o3.rotation.set(c.rot + q * 5, c.rot + q * 3, 0); o3.scale.setScalar(1); o3.updateMatrix(); this.conf.setMatrixAt(i, o3.matrix); }); this.conf.instanceMatrix.needsUpdate = true; } else this.conf.count = 0;
     this.frameCamera(t, st ? st.car : null, !!st, opts.winAt != null && simT > opts.winAt ? ss(opts.winAt, opts.winAt + 1.2, simT) : 0, simT);
     if (opts.shake){ this.camera.position.x += Math.sin(t * 91) * opts.shake; this.camera.position.y += Math.cos(t * 77) * opts.shake; }
+    this.sky.update(t, this.camera);
     this.renderer.render(this.scene, this.camera);
   }
 }

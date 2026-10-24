@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#2f45ff">
 <title>Draw Bridge</title>
-<link rel="stylesheet" href="css/style.css">
-<script src="vendor/planck.min.js"></script>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+<script>/* if this page is an old cached copy, reload the newest version */
+fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261024194841' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
+<link rel="stylesheet" href="css/style.css?v=20261024194841">
+<script src="vendor/planck.min.js?v=20261024194841"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261024194841" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -56,6 +58,6 @@
   </div>
 </div>
 
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=20261024194841"></script>
 </body>
 </html>

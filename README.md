@@ -39,7 +39,11 @@ New hazard types go in `js/physics.js` (behaviour) and `js/scene.js` (looks).
 
 ## Adding styles
 
-Styles live in [`js/themes.js`](js/themes.js). Building patterns are painted in [`js/textures.js`](js/textures.js).
+Styles live in [`js/themes.js`](js/themes.js) (`skyFx` sets the sun/moon position, size and glow; the sky and clouds are drawn by [`js/sky.js`](js/sky.js)). Building patterns are painted in [`js/textures.js`](js/textures.js).
+
+## Publishing an update
+
+Run `python3 tools/bump-version.py` before committing. It stamps every file with a new version so phones load the update immediately instead of a cached copy.
 
 ## Running locally
 
