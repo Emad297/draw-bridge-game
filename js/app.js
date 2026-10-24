@@ -194,5 +194,5 @@ function rr(g, x, y, w, h, r){ g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w,
 
 // stop iOS pinch / double-tap zoom from fighting the drawing
 ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
-toMenu();
+toMenu(); requestAnimationFrame(() => document.body.classList.add('ready'));
 window.__app = { go, get mode(){ return mode; }, get strokes(){ return strokes; }, set strokes(v){ strokes = v; view.setInk(v); meter(); }, view, startLevel, exportVideo, get likes(){ return likes; } };

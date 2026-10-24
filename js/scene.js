@@ -27,9 +27,9 @@ export class Diorama {
     this.canvas = canvas;
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    const scene = this.scene = new THREE.Scene(); this.camera = new THREE.PerspectiveCamera(36, 9 / 16, .1, 600);
+    const scene = this.scene = new THREE.Scene(); this.camera = new THREE.PerspectiveCamera(36, 9 / 16, 2, 400);
     scene.fog = new THREE.Fog('#8fa8ff', 35, 110); this.hemi = new THREE.HemisphereLight('#eef2ff', '#6a5a7a', 1.3); scene.add(this.hemi); this.pm = new THREE.PMREMGenerator(r);
-    const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 70 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .03; scene.add(sun, sun.target);
+    const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
     this.levelG = new THREE.Group(); scene.add(this.levelG);
     this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
     this.cyl = new THREE.CylinderGeometry(.09, .09, 1, 10); this.cap = new THREE.SphereGeometry(.09, 10, 8);
@@ -190,7 +190,8 @@ export class Diorama {
     // the same angle while drawing and at the start of the run, so the line never seems to jump; a gentle drift once it is going
     const sway = ss(0, 4, runT), c = this.camState.tgt, az = .14 + Math.sin(runT * .23) * .04 * sway, el = .1 + Math.sin(runT * .17) * .02 * sway, d = dist * (1 - winPush * .08);
     cam.position.set(c.x + Math.sin(az) * Math.cos(el) * d, c.y + Math.sin(el) * d, c.z + Math.cos(az) * Math.cos(el) * d); cam.lookAt(c.x, c.y, 0);
-    this.sun.position.set(c.x + 8, c.y + 16, 14); this.sun.target.position.copy(c); }
+    // the sun stays fixed for the whole level: a sun that follows the camera makes shadow edges shimmer
+    const [lx, ly] = this.level.view; this.sun.position.set(lx + 10, ly + 20, 18); this.sun.target.position.set(lx, ly - 4, 0); }
   // ---------------- draw one frame from a physics state (or the idle start state)
   render(t, st, opts = {}){
     const L = this.level, dt = this.fxT == null ? 0 : Math.min(.1, Math.max(0, t - this.fxT)); this.fxT = t;
