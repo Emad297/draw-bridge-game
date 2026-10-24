@@ -5,7 +5,7 @@ const bufs = {}; let live = null, G = null, offT = null, loading = null;
 
 function graph(ctx){
   const out = ctx.createDynamicsCompressor(); out.threshold.value = -14; out.ratio.value = 5; out.attack.value = .004; out.release.value = .25; out.connect(ctx.destination);
-  const master = ctx.createGain(); master.gain.value = .9; master.connect(out);
+  const master = ctx.createGain(); master.gain.value = .7; master.connect(out);
   // a short outdoor-ish reverb made from decaying noise
   const len = Math.floor(ctx.sampleRate * 2.4), ir = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let c = 0; c < 2; c++){ const d = ir.getChannelData(c); for (let i = 0; i < len; i++){ const u = i / len; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - u, 3.2) * (i < ctx.sampleRate * .012 ? 0 : 1); } }
