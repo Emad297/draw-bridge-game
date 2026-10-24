@@ -1,0 +1,134 @@
+import { LEVELS } from './levels.js';
+import { createSim, inkLength, DT } from './physics.js';
+import { Diorama } from './scene.js';
+import * as S from './audio.js';
+
+const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
+const q = v => Math.round(v * 100) / 100;
+const store = { get(k, d){ try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } } };
+let likes = store.get('dbg-likes', []), wins = store.get('dbg-wins', {});
+const saveLikes = () => { if (!store.set('dbg-likes', likes)){ likes.forEach((l, i) => { if (i < likes.length - 6) l.thumb = ''; }); store.set('dbg-likes', likes); } updateLikeCount(); };
+
+const view = new Diorama($('#game'));
+const fit = () => view.size(innerWidth, innerHeight); addEventListener('resize', fit); fit();
+
+let mode = 'menu', li = 0, level = LEVELS[0], strokes = [], cur = null, sim = null, st = null, acc = 0, clock = 0, shake = 0, winAt = null, endAt = null, lastResult = null, likedThis = null, drawing = false;
+
+// ---------------- menu
+function buildMenu(){ const g = $('#levels'); g.innerHTML = '';
+  LEVELS.forEach((L, i) => { const b = document.createElement('button'); b.className = 'lvl' + (wins[L.id] ? ' won' : '');
+    const icon = { spinner: '⚙️', saw: '🪚', fan: '🌀' }[(L.hazards || [])[0]?.type] || '';
+    b.innerHTML = `<b>${i + 1}</b><span>${L.name}</span><em>${icon}${wins[L.id] ? ' ✓' : ''}</em>`; b.onclick = () => startLevel(i); g.appendChild(b); }); updateLikeCount(); }
+function updateLikeCount(){ $('#likedBtn').textContent = `👍 ${likes.length}`; $('#likedBtn').disabled = !likes.length; }
+function toMenu(){ mode = 'menu'; S.engineOff(); [$('#hud'), $('#tools'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); buildMenu(); setLevel(li); view.drawMode = true; }
+
+// ---------------- level / drawing
+function setLevel(i){ li = i; level = LEVELS[i]; view.setLevel(level); }
+function startLevel(i){ S.initAudio(); setLevel(i); strokes = []; toDraw(); }
+function toDraw(){ mode = 'draw'; sim = null; st = null; winAt = endAt = null; S.engineOff(); view.drawMode = true; view.setInk(strokes); view.camState = null;
+  show($('#menu'), false); show($('#result'), false); show($('#liked'), false); show($('#hud')); show($('#tools')); $('#lvname').textContent = `${li + 1}. ${level.name}`; meter(); }
+const used = () => inkLength(strokes);
+function meter(){ const f = Math.max(0, 1 - used() / level.ink); $('#meter i').style.width = (f * 100) + '%'; $('#meter').classList.toggle('low', f < .15); $('#go').disabled = false; $('#undo').disabled = $('#clear').disabled = !strokes.length; }
+const cv = $('#game');
+cv.addEventListener('pointerdown', e => { S.initAudio(); if (mode !== 'draw' || used() >= level.ink - .05) return; const p = view.toWorld(e.clientX, e.clientY); if (!p) return;
+  cv.setPointerCapture(e.pointerId); drawing = true; cur = [[q(p[0]), q(p[1])]]; strokes.push(cur); view.addInkDot(...cur[0]); view.pen.visible = true; view.pen.position.set(p[0], p[1], 0); meter(); });
+cv.addEventListener('pointermove', e => { if (!drawing) return; const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of evs){ const p = view.toWorld(ev.clientX, ev.clientY); if (!p) continue; const l = cur[cur.length - 1]; let d = Math.hypot(p[0] - l[0], p[1] - l[1]); if (d < .14) continue;
+    const left = level.ink - used(); if (left <= .02){ endStroke(); return; } let x = p[0], y = p[1]; if (d > left){ const k = left / d; x = l[0] + (x - l[0]) * k; y = l[1] + (y - l[1]) * k; }
+    const pt = [q(x), q(y)]; if (pt[0] === l[0] && pt[1] === l[1]) continue; cur.push(pt); view.addInkSegment(l[0], l[1], pt[0], pt[1]); view.pen.position.set(pt[0], pt[1], 0); S.squeak(); } meter(); });
+const endStroke = () => { if (!drawing) return; drawing = false; view.pen.visible = false; meter(); };
+cv.addEventListener('pointerup', endStroke); cv.addEventListener('pointercancel', endStroke);
+$('#undo').onclick = () => { strokes.pop(); view.setInk(strokes); meter(); S.pop(); };
+$('#clear').onclick = () => { strokes = []; view.setInk(strokes); meter(); S.whoosh(); };
+$('#back').onclick = toMenu;
+addEventListener('keydown', e => { if (mode === 'draw' && (e.ctrlKey || e.metaKey) && e.key === 'z'){ $('#undo').onclick(); e.preventDefault(); } if (mode === 'draw' && e.key === 'Enter') go(); });
+
+// ---------------- run
+function go(){ if (mode !== 'draw') return; endStroke(); S.initAudio(); mode = 'run'; view.drawMode = false; sim = createSim(level, strokes); st = sim.state(); acc = 0; shake = 0; winAt = endAt = null; lastResult = null; likedThis = null;
+  show($('#tools'), false); S.engineOn(); }
+$('#go').onclick = go;
+function handle(evs, live){ for (const [k, a] of evs){
+  if (k === 'shot') S.shot();
+  if (k === 'crash'){ S.crash(a); shake = Math.max(shake, a * .35); }
+  if (k === 'fall'){ S.fall(); }
+  if (k === 'win'){ winAt = sim.t; S.win(); S.engineOff(); }
+  if (k === 'end'){ endAt = sim.t; S.engineOff(); if (a !== 'win') S.sad(); if (live) showResult(a); } } }
+function showResult(r){ lastResult = r; mode = 'result'; if (r === 'win'){ wins[level.id] = 1; store.set('dbg-wins', wins); }
+  $('#resEmoji').textContent = { win: '🏁', fell: '💥', stuck: '😐', timeout: '⏳' }[r]; $('#like').classList.remove('on'); show($('#next'), r === 'win' && li < LEVELS.length - 1); show($('#result')); }
+$('#retry').onclick = () => toDraw();
+$('#next').onclick = () => startLevel(li + 1);
+$('#like').onclick = () => {
+  if (likedThis){ likes = likes.filter(l => l.id !== likedThis); likedThis = null; $('#like').classList.remove('on'); saveLikes(); return; }
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6); likedThis = id;
+  likes.push({ id, levelId: level.id, strokes: JSON.parse(JSON.stringify(strokes)), result: lastResult, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
+function thumb(){ const c = document.createElement('canvas'), s = view.canvas, w = 240, h = Math.round(w * s.height / s.width); c.width = w; c.height = Math.min(h, 320); const g = c.getContext('2d'); g.drawImage(s, 0, (s.height - c.height * s.width / w) / 2, s.width, c.height * s.width / w, 0, 0, w, c.height); return c.toDataURL('image/jpeg', .7); }
+
+// ---------------- main loop
+let last = performance.now();
+function frame(now){ const dt = Math.min(.05, (now - last) / 1000); last = now; clock += dt;
+  if ((mode === 'run' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const ev = sim.step(); handle(ev, mode === 'run'); acc -= DT; } st = sim.state(); if (mode === 'run') S.engineRev(st.car[0]); }
+  shake *= Math.pow(.02, dt);
+  if (mode !== 'export') view.render(clock, st, { winAt, shake });
+  requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+
+// ---------------- liked list
+$('#likedBtn').onclick = openLiked;
+$('#likedBack').onclick = toMenu;
+function openLiked(){ mode = 'liked'; show($('#menu'), false); show($('#liked')); renderLiked(); }
+function renderLiked(){ const box = $('#likeList'); box.innerHTML = '';
+  likes.forEach((l, i) => { const L = LEVELS.find(x => x.id === l.levelId), d = document.createElement('div'); d.className = 'card';
+    d.innerHTML = `<img src="${l.thumb || ''}" alt=""><div class="meta"><b>${L ? L.name : l.levelId} ${{ win: '🏁', fell: '💥', stuck: '😐', timeout: '⏳' }[l.result] || ''}</b><input placeholder="caption" maxlength="60"></div><div class="ord"><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="del">✕</button></div>`;
+    const inp = d.querySelector('input'); inp.value = l.caption || ''; inp.oninput = () => { l.caption = inp.value; saveLikes(); };
+    d.querySelectorAll('button').forEach(b => b.onclick = () => { const a = b.dataset.a;
+      if (a === 'up' && i > 0) [likes[i - 1], likes[i]] = [likes[i], likes[i - 1]];
+      if (a === 'down' && i < likes.length - 1) [likes[i + 1], likes[i]] = [likes[i], likes[i + 1]];
+      if (a === 'del') likes.splice(i, 1);
+      saveLikes(); renderLiked(); });
+    box.appendChild(d); });
+  $('#saveVideo').disabled = !likes.length; }
+$('#saveVideo').onclick = () => exportVideo(likes.filter(l => LEVELS.some(L => L.id === l.levelId)));
+
+// ---------------- video export: replay every liked run, record canvas + sound
+const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+const ss = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); return x * x * (3 - 2 * x); };
+let exporter = null;
+function pickMime(){ for (const m of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; return ''; }
+async function exportVideo(items){
+  if (!items.length || exporter) return; S.initAudio(); mode = 'export'; show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out'));
+  const W = 720, H = 1280, out = $('#out'), g = out.getContext('2d'); out.width = W; out.height = H;
+  if (!exporter){ const c = document.createElement('canvas'); exporter = new Diorama(c); exporter.size(W, H, 1); }
+  const D = exporter, stream = out.captureStream(30); S.audioStream().getAudioTracks().forEach(t => stream.addTrack(t));
+  const mime = pickMime(), rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {}), chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const done = new Promise(r => rec.onstop = r); rec.start(500); S.beat(true);
+  let cancel = false; $('#closeExp').onclick = () => { cancel = true; };
+  const compose = (cap, flash) => { g.drawImage(D.canvas, 0, 0, W, H);
+    if (cap){ g.font = '800 46px system-ui, -apple-system, Segoe UI, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; const tw = Math.min(W - 60, g.measureText(cap).width + 56); g.fillStyle = 'rgba(0,0,0,.85)'; rr(g, (W - tw) / 2, 150, tw, 84, 18); g.fill(); g.fillStyle = '#fff'; g.fillText(cap, W / 2, 193, W - 100); }
+    if (flash > 0){ g.fillStyle = `rgba(255,255,255,${flash})`; g.fillRect(0, 0, W, H); } };
+  let clk = 0, total = 0; const est = items.reduce((a, l) => a + 2 + 6, 0);
+  for (let i = 0; i < items.length && !cancel; i++){ const it = items[i], L = LEVELS.find(x => x.id === it.levelId); D.setLevel(L); D.drawMode = true;
+    // 1) the pen draws it
+    const len = inkLength(it.strokes), drawDur = Math.min(2.6, Math.max(.7, len / 11)); let t0 = performance.now(), t = 0;
+    while (t < drawDur + .35 && !cancel){ await nextFrame(); const t1 = performance.now(), dt = Math.min(.05, (t1 - t0) / 1000); t0 = t1; t += dt; clk += dt; total += dt;
+      const upto = len * ss(.15, drawDur, t), tip = D.setInk(it.strokes, upto); D.pen.visible = !!tip && t > .1 && t < drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < len) S.squeak();
+      D.render(clk, null, {}); compose(it.caption, i ? 1 - ss(0, .3, t) : 0); prog(total / est); }
+    D.pen.visible = false; D.setInk(it.strokes); D.drawMode = false;
+    // 2) the run, replayed exactly
+    sim = createSim(L, it.strokes); let s = sim.state(), a = 0, wAt = null, eAt = null, sh = 0; S.engineOn(); t0 = performance.now();
+    while (!cancel){ await nextFrame(); const t1 = performance.now(), dt = Math.min(.05, (t1 - t0) / 1000); t0 = t1; clk += dt; total += dt; a += dt;
+      while (a >= DT){ for (const [k, v] of sim.step()){ if (k === 'shot') S.shot(); if (k === 'crash'){ S.crash(v); sh = Math.max(sh, v * .35); } if (k === 'fall') S.fall(); if (k === 'win'){ wAt = sim.t; S.win(); S.engineOff(); } if (k === 'end'){ eAt = sim.t; S.engineOff(); if (v !== 'win') S.sad(); } } a -= DT; }
+      s = sim.state(); sh *= Math.pow(.02, dt); S.engineRev(s.car[0]); D.render(clk, s, { winAt: wAt, shake: sh }); compose(it.caption, 0); prog(total / est);
+      if (eAt != null && sim.t > eAt + (i === items.length - 1 ? 1.2 : .5)) break; } S.engineOff(); }
+  S.beat(false); sim = null; rec.stop(); await done; show($('#out'), false);
+  if (cancel){ closeExport(); return; }
+  const type = (mime || 'video/webm').split(';')[0], blob = new Blob(chunks, { type }), url = URL.createObjectURL(blob), ext = type.includes('mp4') ? 'mp4' : 'webm', name = `draw-bridge-${new Date().toISOString().slice(0, 10)}.${ext}`;
+  const v = $('#vid'); v.src = url; show(v); prog(1); const dl = $('#dl'); dl.href = url; dl.download = name; show($('#expDone'));
+  const file = new File([blob], name, { type }); $('#share').style.display = navigator.canShare && navigator.canShare({ files: [file] }) ? '' : 'none';
+  $('#share').onclick = () => navigator.share({ files: [file] }).catch(() => {});
+  $('#closeExp').onclick = closeExport; }
+function closeExport(){ show($('#export'), false); const v = $('#vid'); v.pause(); openLiked(); }
+function prog(f){ $('#prog i').style.width = Math.min(100, f * 100) + '%'; }
+function rr(g, x, y, w, h, r){ g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+toMenu();
+window.__app = { go, get mode(){ return mode; }, get strokes(){ return strokes; }, set strokes(v){ strokes = v; view.setInk(v); meter(); }, view, startLevel, exportVideo, get likes(){ return likes; } };
