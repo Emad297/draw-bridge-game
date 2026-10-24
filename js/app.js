@@ -1,5 +1,5 @@
 import { LEVELS } from './levels.js';
-import { createSim, inkLength, DT } from './physics.js';
+import { createSim, inkLength, fitPoint, DT } from './physics.js';
 import { Diorama } from './scene.js';
 import * as S from './audio.js';
 import { THEMES } from './themes.js';
@@ -28,41 +28,53 @@ function buildMenu(){ buildThemes(); const g = $('#levels'); g.innerHTML = '';
     const icon = { spinner: '⚙️', saw: '🪚', fan: '🌀' }[(L.hazards || [])[0]?.type] || '';
     b.innerHTML = `<b>${i + 1}</b><span>${L.name}</span><em>${icon}${wins[L.id] ? ' ✓' : ''}</em>`; b.onclick = () => startLevel(i); g.appendChild(b); }); updateLikeCount(); }
 function updateLikeCount(){ $('#likedBtn').textContent = `👍 ${likes.length}`; $('#likedBtn').disabled = !likes.length; }
-function toMenu(){ mode = 'menu'; S.engineOff(); [$('#hud'), $('#tools'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); buildMenu(); setLevel(li); view.drawMode = true; }
+function toMenu(){ mode = 'menu'; S.drive(null); [$('#hud'), $('#tools'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); buildMenu(); setLevel(li); }
 
 // ---------------- level / drawing
 function setLevel(i){ li = i; level = LEVELS[i]; view.setLevel(level); }
 function startLevel(i){ S.initAudio(); setLevel(i); strokes = []; toDraw(); }
-function toDraw(){ mode = 'draw'; sim = null; st = null; winAt = endAt = null; S.engineOff(); view.drawMode = true; view.setInk(strokes); view.camState = null;
+function toDraw(){ mode = 'draw'; sim = null; st = null; winAt = endAt = null; S.drive(null); view.resetCar(); view.clearFx(); view.setLevel(level); view.setInk(strokes);
   show($('#menu'), false); show($('#result'), false); show($('#liked'), false); show($('#hud')); show($('#tools')); $('#lvname').textContent = `${li + 1}. ${level.name}`; meter(); }
 const used = () => inkLength(strokes);
 function meter(){ const f = Math.max(0, 1 - used() / level.ink); $('#meter i').style.width = (f * 100) + '%'; $('#meter').classList.toggle('low', f < .15); $('#go').disabled = false; $('#undo').disabled = $('#clear').disabled = !strokes.length; }
 const cv = $('#game');
-cv.addEventListener('pointerdown', e => { S.initAudio(); if (mode !== 'draw' || used() >= level.ink - .05) return; const p = view.toWorld(e.clientX, e.clientY); if (!p) return;
-  cv.setPointerCapture(e.pointerId); drawing = true; cur = [[q(p[0]), q(p[1])]]; strokes.push(cur); view.addInkDot(...cur[0]); view.pen.visible = true; view.pen.position.set(p[0], p[1], 0); meter(); });
+cv.addEventListener('pointerdown', e => { S.initAudio(); if (mode !== 'draw' || used() >= level.ink - .05) return; let p = view.toWorld(e.clientX, e.clientY); if (!p) return; p = fitPoint(level, p[0], p[1]);
+  cv.setPointerCapture(e.pointerId); drawing = true; cur = [p]; strokes.push(cur); view.beginStroke(p[0], p[1]); view.pen.visible = true; view.pen.position.set(p[0], p[1], 0); meter(); });
 cv.addEventListener('pointermove', e => { if (!drawing) return; const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
-  for (const ev of evs){ const p = view.toWorld(ev.clientX, ev.clientY); if (!p) continue; const l = cur[cur.length - 1]; let d = Math.hypot(p[0] - l[0], p[1] - l[1]); if (d < .14) continue;
+  for (const ev of evs){ let p = view.toWorld(ev.clientX, ev.clientY); if (!p) continue; p = fitPoint(level, p[0], p[1]); const l = cur[cur.length - 1]; let d = Math.hypot(p[0] - l[0], p[1] - l[1]); if (d < .14) continue;
     const left = level.ink - used(); if (left <= .02){ endStroke(); return; } let x = p[0], y = p[1]; if (d > left){ const k = left / d; x = l[0] + (x - l[0]) * k; y = l[1] + (y - l[1]) * k; }
-    const pt = [q(x), q(y)]; if (pt[0] === l[0] && pt[1] === l[1]) continue; cur.push(pt); view.addInkSegment(l[0], l[1], pt[0], pt[1]); view.pen.position.set(pt[0], pt[1], 0); S.squeak(); } meter(); });
+    const pt = fitPoint(level, x, y); if (pt[0] === l[0] && pt[1] === l[1]) continue; cur.push(pt); view.addInkSegment(l[0], l[1], pt[0], pt[1]); view.pen.position.set(pt[0], pt[1], 0); S.squeak(); } meter(); });
 const endStroke = () => { if (!drawing) return; drawing = false; view.pen.visible = false; meter(); };
 cv.addEventListener('pointerup', endStroke); cv.addEventListener('pointercancel', endStroke);
 $('#undo').onclick = () => { strokes.pop(); view.setInk(strokes); meter(); S.pop(); };
 $('#clear').onclick = () => { strokes = []; view.setInk(strokes); meter(); S.whoosh(); };
-$('#back').onclick = toMenu;
+$('#back').onclick = () => mode === 'run' || mode === 'result' ? toDraw() : toMenu();
 addEventListener('keydown', e => { if (mode === 'draw' && (e.ctrlKey || e.metaKey) && e.key === 'z'){ $('#undo').onclick(); e.preventDefault(); } if (mode === 'draw' && e.key === 'Enter') go(); });
 
 // ---------------- run
-function go(){ if (mode !== 'draw') return; endStroke(); S.initAudio(); mode = 'run'; view.drawMode = false; sim = createSim(level, strokes); st = sim.state(); acc = 0; shake = 0; winAt = endAt = null; lastResult = null; likedThis = null;
-  show($('#tools'), false); S.engineOn(); }
+function go(){ if (mode !== 'draw') return; endStroke(); S.initAudio(); mode = 'run'; sim = createSim(level, strokes); st = sim.state(); acc = 0; shake = 0; winAt = endAt = null; lastResult = null; likedThis = null; pending = [];
+  show($('#tools'), false); }
 $('#go').onclick = go;
-function handle(evs, live){ for (const [k, a] of evs){
-  if (k === 'shot') S.shot();
-  if (k === 'crash'){ S.crash(a); shake = Math.max(shake, a * .35); }
-  if (k === 'fall'){ S.fall(); }
-  if (k === 'win'){ winAt = sim.t; S.win(); S.engineOff(); }
-  if (k === 'end'){ endAt = sim.t; S.engineOff(); if (a !== 'win') S.sad(); if (live) showResult(a); } } }
+let pending = [], boomT = 0;
+// one place that turns physics events into sound and camera shake (used by the game and by the video export)
+function react(e, camX, simT){ const [k, a, b, c, d, f] = e, pan = x => (x - camX) / 9;
+  if (k === 'hit') S.hit(a, b, c, pan(d));
+  if (k === 'boom'){ S.boom(pan(a)); return .9; }
+  if (k === 'crumble'){ S.crumble(c, pan(a)); return .12 + c * .2; }
+  if (k === 'snap') S.snap(pan(a));
+  if (k === 'partoff') S.partoff(pan(a));
+  if (k === 'dent') S.dent(a, pan(b));
+  if (k === 'spark') S.spark(pan(a));
+  if (k === 'shot') S.shot(pan(a));
+  if (k === 'fall') S.fall();
+  if (k === 'win') S.win();
+  if (k === 'crash') return a * .3;
+  return 0; }
+function handle(evs, live){ const camX = view.camState ? view.camState.tgt.x : 0; for (const e of evs){ pending.push(e); shake = Math.max(shake, react(e, camX));
+  if (e[0] === 'win') winAt = sim.t; if (e[0] === 'boom') boomT = sim.t; if (e[0] === 'end'){ endAt = sim.t; if (live) showResult(e[1]); } } }
+const RES = { win: '🏁', boom: '🔥', fell: '💥', stuck: '😐', timeout: '⏳' };
 function showResult(r){ lastResult = r; mode = 'result'; if (r === 'win'){ wins[level.id] = 1; store.set('dbg-wins', wins); }
-  $('#resEmoji').textContent = { win: '🏁', fell: '💥', stuck: '😐', timeout: '⏳' }[r]; $('#like').classList.remove('on'); show($('#next'), r === 'win' && li < LEVELS.length - 1); show($('#result')); }
+  $('#resEmoji').textContent = RES[r] || '💥'; $('#like').classList.remove('on'); show($('#next'), r === 'win' && li < LEVELS.length - 1); show($('#result')); }
 $('#retry').onclick = () => toDraw();
 $('#next').onclick = () => startLevel(li + 1);
 $('#like').onclick = () => {
@@ -74,9 +86,10 @@ function thumb(){ const c = document.createElement('canvas'), s = view.canvas, w
 // ---------------- main loop
 let last = performance.now();
 function frame(now){ const dt = Math.min(.05, (now - last) / 1000); last = now; clock += dt;
-  if ((mode === 'run' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const ev = sim.step(); handle(ev, mode === 'run'); acc -= DT; } st = sim.state(); if (mode === 'run') S.engineRev(st.car[0]); }
+  if ((mode === 'run' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const ev = sim.step(); handle(ev, mode === 'run'); acc -= DT; } st = sim.state(); }
+  if (mode !== 'export') S.drive(st && { on: !st.exploded && !st.won && st.t > .4, rpm: st.rpm, roll: st.roll, fire: st.exploded ? Math.max(0, 1 - (st.t - boomT) / 9) : st.fire ? .7 : 0, dt, pan: view.camState ? (st.car[0] - view.camState.tgt.x) / 9 : 0 });
   shake *= Math.pow(.02, dt);
-  if (mode !== 'export') view.render(clock, st, { winAt, shake });
+  if (mode !== 'export'){ view.render(clock, st, { winAt, shake, events: pending }); pending = []; }
   requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 
@@ -86,7 +99,7 @@ $('#likedBack').onclick = toMenu;
 function openLiked(){ mode = 'liked'; show($('#menu'), false); show($('#liked')); renderLiked(); }
 function renderLiked(){ const box = $('#likeList'); box.innerHTML = '';
   likes.forEach((l, i) => { const L = LEVELS.find(x => x.id === l.levelId), d = document.createElement('div'); d.className = 'card';
-    d.innerHTML = `<img src="${l.thumb || ''}" alt=""><div class="meta"><b>${L ? L.name : l.levelId} ${{ win: '🏁', fell: '💥', stuck: '😐', timeout: '⏳' }[l.result] || ''}</b><input placeholder="caption" maxlength="60"></div><div class="ord"><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="del">✕</button></div>`;
+    d.innerHTML = `<img src="${l.thumb || ''}" alt=""><div class="meta"><b>${L ? L.name : l.levelId} ${RES[l.result] || ''}</b><input placeholder="caption" maxlength="60"></div><div class="ord"><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="del">✕</button></div>`;
     const inp = d.querySelector('input'); inp.value = l.caption || ''; inp.oninput = () => { l.caption = inp.value; saveLikes(); };
     d.querySelectorAll('button').forEach(b => b.onclick = () => { const a = b.dataset.a;
       if (a === 'up' && i > 0) [likes[i - 1], likes[i]] = [likes[i], likes[i - 1]];
@@ -117,16 +130,18 @@ function setupExport(){ S.initAudio(); mode = 'export'; show($('#liked'), false)
     if (flash > 0){ g.fillStyle = `rgba(255,255,255,${flash})`; g.fillRect(0, 0, VW, VH); } };
   return { out, compose }; }
 // renders one clip; `frame()` is awaited after every rendered frame
-async function playClip(p, i, compose, frame, sfx){ const D = exporter, it = p.it; D.setTheme(themeOf(it.theme)); D.setLevel(p.L); D.drawMode = true; let clk = 0;
+async function playClip(p, i, compose, frame, sfx){ const D = exporter, it = p.it; D.setTheme(themeOf(it.theme)); D.setLevel(p.L); D.resetCar(); D.clearFx(); let clk = 0;
   for (let n = 0; n < p.drawFrames; n++){ const t = n / FPS; clk = t; sfx.at?.();
     const upto = p.len * ss(.15, p.drawDur, t), tip = D.setInk(it.strokes, upto); D.pen.visible = !!tip && t > .1 && t < p.drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < p.len) S.squeak();
     D.render(clk, null, {}); compose(it.caption, i ? 1 - ss(0, .3, t) : 0); if (await frame()) return; }
-  D.pen.visible = false; D.setInk(it.strokes); D.drawMode = false;
-  const sm = createSim(p.L, it.strokes); let wAt = null, sh = 0; sfx.at?.(); S.engineOn();
+  D.pen.visible = false; D.setInk(it.strokes);
+  const sm = createSim(p.L, it.strokes); let wAt = null, sh = 0, boomT = null; sfx.at?.();
   for (let n = 0; n < p.runFrames; n++){ clk += 1 / FPS; sfx.at?.();
-    for (const [k, v] of sm.step()){ if (k === 'shot') S.shot(); if (k === 'crash'){ S.crash(v); sh = Math.max(sh, v * .35); } if (k === 'fall') S.fall(); if (k === 'win'){ wAt = sm.t; S.win(); S.engineOff(); } if (k === 'end'){ S.engineOff(); if (v !== 'win') S.sad(); } }
-    const s = sm.state(); sh *= Math.pow(.02, 1 / FPS); S.engineRev(s.car[0]); D.render(clk, s, { winAt: wAt, shake: sh }); compose(it.caption, 0); if (await frame()) return; }
-  S.engineOff(); }
+    const evs = sm.step(), camX = D.camState ? D.camState.tgt.x : 0; for (const e of evs){ sh = Math.max(sh, react(e, camX)); if (e[0] === 'win') wAt = sm.t; if (e[0] === 'boom') boomT = sm.t; }
+    const s = sm.state(); sh *= Math.pow(.02, 1 / FPS);
+    S.drive({ on: !s.exploded && !s.won && s.t > .4, rpm: s.rpm, roll: s.roll, fire: s.exploded ? Math.max(0, 1 - (s.t - boomT) / 9) : s.fire ? .7 : 0, dt: 1 / FPS, pan: (s.car[0] - camX) / 9 });
+    D.render(clk, s, { winAt: wAt, shake: sh, events: evs }); compose(it.caption, 0); if (await frame()) return; }
+  S.drive(null); }
 async function exportVideo(items){
   if (!items.length || busy) return; busy = true; let cancel = false; $('#closeExp').onclick = () => { cancel = true; };
   try {
@@ -136,7 +151,7 @@ async function exportVideo(items){
     const plan = items.map((it, i) => planClip(it, i === items.length - 1)), total = plan.reduce((a, p) => a + p.drawFrames + p.runFrames, 0), dur = total / FPS;
     const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: vc[1], width: VW, height: VH, frameRate: FPS }, ...(ac ? { audio: { codec: ac[1], numberOfChannels: 2, sampleRate: 48000 } } : {}), fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
     let err = null; const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => err = e }); venc.configure(vc[0]);
-    const octx = new OfflineAudioContext(2, Math.ceil((dur + .5) * 48000), 48000), A = S.offline(octx); A.beat(0, dur);
+    const octx = new OfflineAudioContext(2, Math.ceil((dur + .5) * 48000), 48000), A = S.offline(octx);
     let f = 0; const sfx = { at: () => A.at(f / FPS) };
     const frame = async () => { const vf = new VideoFrame(out, { timestamp: Math.round(f * 1e6 / FPS), duration: Math.round(1e6 / FPS) }); venc.encode(vf, { keyFrame: f % (FPS * 2) === 0 }); vf.close(); f++;
       while (venc.encodeQueueSize > 4) await sleep(2); if (f % 3 === 0){ prog(f / total * .95); await sleep(0); } if (err) throw err; return cancel; };
@@ -157,11 +172,11 @@ async function exportRealtime(items, out, compose, cancelled){
   const stream = out.captureStream(FPS); S.audioStream().getAudioTracks().forEach(t => stream.addTrack(t));
   const mime = ['video/mp4;codecs=avc1.640034,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
   const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: VBITRATE, audioBitsPerSecond: 256000 }), chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  const done = new Promise(r => rec.onstop = r); rec.start(500); S.beat(true);
+  const done = new Promise(r => rec.onstop = r); rec.start(500);
   const plan = items.map((it, i) => planClip(it, i === items.length - 1)), total = plan.reduce((a, p) => a + p.drawFrames + p.runFrames, 0); let f = 0, t0 = performance.now();
   const frame = async () => { f++; prog(f / total); const due = t0 + f * 1000 / FPS; while (performance.now() < due) await new Promise(r => requestAnimationFrame(r)); return cancelled(); };
   for (let i = 0; i < plan.length && !cancelled(); i++) await playClip(plan[i], i, compose, frame, {});
-  S.beat(false); rec.stop(); await done;
+  rec.stop(); await done;
   if (cancelled()) return closeExport();
   const type = (mime || 'video/webm').split(';')[0]; finish(new Blob(chunks, { type }), type.includes('mp4') ? 'mp4' : 'webm'); }
 function finish(blob, ext){ show($('#out'), false); const url = URL.createObjectURL(blob), name = `draw-bridge-${new Date().toISOString().slice(0, 10)}.${ext}`;

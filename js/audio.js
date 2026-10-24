@@ -1,48 +1,82 @@
-// Tiny WebAudio synth. Everything goes through `master`, which can also feed the video recorder.
-let ctx = null, master = null, dest = null, noiseBuf = null, engine = null, beatTimer = null, offT = null;
+// Sound: real recorded impacts/explosions (Kenney, CC0 — see sfx/) layered with synthesized engine, tyres, fire and wind.
+// Everything runs through one graph per AudioContext, so the same code also renders offline into the exported video.
+const NAMES = { metalH: 5, metalM: 5, metalL: 5, rock: 5, ink: 5, thud: 5, plate: 5, pebble: 5, glass: 5, boom: 5, boomLow: 2 };
+const bufs = {}; let live = null, G = null, offT = null, loading = null;
 
-export function initAudio(){
-  if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return ctx; }
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  master = ctx.createGain(); master.gain.value = .8; master.connect(ctx.destination);
-  noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  return ctx;
+function graph(ctx){
+  const out = ctx.createDynamicsCompressor(); out.threshold.value = -14; out.ratio.value = 5; out.attack.value = .004; out.release.value = .25; out.connect(ctx.destination);
+  const master = ctx.createGain(); master.gain.value = .9; master.connect(out);
+  // a short outdoor-ish reverb made from decaying noise
+  const len = Math.floor(ctx.sampleRate * 2.4), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++){ const d = ir.getChannelData(c); for (let i = 0; i < len; i++){ const u = i / len; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - u, 3.2) * (i < ctx.sampleRate * .012 ? 0 : 1); } }
+  const verb = ctx.createConvolver(); verb.buffer = ir; const wet = ctx.createGain(); wet.gain.value = .32; verb.connect(wet).connect(master);
+  const noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = noise.getChannelData(0); let b = 0; for (let i = 0; i < nd.length; i++){ const w = Math.random() * 2 - 1; b = (b + .02 * w) / 1.02; nd[i] = w * .5 + b * 3; }
+  const g = { ctx, master, verb, noise, out };
+  // continuous layers
+  const loop = (filterType, f, q) => { const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true; const fl = ctx.createBiquadFilter(); fl.type = filterType; fl.frequency.value = f; fl.Q.value = q; const gn = ctx.createGain(); gn.gain.value = 0; s.connect(fl).connect(gn).connect(master); s.start(); return { fl, gn }; };
+  g.wind = loop('lowpass', 380, .4); g.wind.gn.gain.value = .05;
+  g.tire = loop('bandpass', 420, .8); g.fireL = loop('lowpass', 900, .5); g.saw = null;
+  // engine: two detuned saws through a soft clipper and a low-pass, with a "putt" tremolo
+  const e1 = ctx.createOscillator(), e2 = ctx.createOscillator(); e1.type = e2.type = 'sawtooth'; const sh = ctx.createWaveShaper(), curve = new Float32Array(256); for (let i = 0; i < 256; i++){ const x = i / 128 - 1; curve[i] = Math.tanh(x * 2.5); } sh.curve = curve;
+  const elp = ctx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 420; elp.Q.value = 2; const trem = ctx.createGain(), lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfoG.gain.value = .35; lfo.connect(lfoG).connect(trem.gain); trem.gain.value = .65;
+  const eg = ctx.createGain(); eg.gain.value = 0; e1.connect(sh); e2.connect(sh); sh.connect(elp).connect(trem).connect(eg).connect(master); [e1, e2, lfo].forEach(o => o.start());
+  g.eng = { e1, e2, lfo, elp, eg };
+  return g;
 }
-export function audioStream(){ initAudio(); if (!dest){ dest = ctx.createMediaStreamDestination(); master.connect(dest); } return dest.stream; }
-const now = () => offT ?? ctx.currentTime;
-const midi = n => 440 * Math.pow(2, (n - 69) / 12);
-function env(g, t, a, peak, dec){ g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + dec); }
-function osc(type, f, t, dur, peak, a = .005, f2 = null, out = master){ const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur); env(g, t, a, peak, dur); o.connect(g).connect(out); o.start(t); o.stop(t + a + dur + .05); return o; }
-function noise(t, dur, peak, type = 'bandpass', f = 2000, q = 1, f2 = null, a = .005){ const s = ctx.createBufferSource(), fl = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noiseBuf; fl.type = type; fl.frequency.setValueAtTime(f, t); if (f2) fl.frequency.exponentialRampToValueAtTime(f2, t + dur); fl.Q.value = q; env(g, t, a, peak, dur); s.connect(fl).connect(g).connect(master); s.start(t, Math.random()); s.stop(t + a + dur + .05); }
+export function initAudio(){
+  if (!live){ const AC = window.AudioContext || window.webkitAudioContext; live = new AC(); G = graph(live); loadSounds(); }
+  if (live.state === 'suspended') live.resume(); return live;
+}
+function loadSounds(){ if (loading) return loading; const base = new URL('../sfx/', import.meta.url);
+  loading = Promise.all(Object.entries(NAMES).flatMap(([n, k]) => Array.from({ length: k }, (_, i) => fetch(new URL(`${n}${i}.mp3`, base)).then(r => r.arrayBuffer()).then(a => live.decodeAudioData(a)).then(b => { (bufs[n] ||= [])[i] = b; }).catch(() => {}))));
+  return loading; }
+export function audioStream(){ initAudio(); if (!G.dest){ G.dest = live.createMediaStreamDestination(); G.out.connect(G.dest); } return G.dest.stream; }
+const now = () => offT ?? G.ctx.currentTime;
+const on = () => G && (offT != null || G.ctx.state === 'running');
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
-const on = () => ctx && (offT != null || ctx.state === 'running');
-let lastSqueak = 0;
-export function squeak(){ if (!on() || now() - lastSqueak < .045) return; lastSqueak = now(); noise(now(), .06, .09, 'bandpass', 1800 + Math.random() * 3400, 6); }
-export function crash(i = .6){ if (!on()) return; const t = now(); osc('sine', 130, t, .25, .5 * i + .2, .002, 40); noise(t, .18, .35 * i + .1, 'lowpass', 900, .7); }
-export function fall(){ if (!on()) return; osc('sine', 1500, now(), 1.1, .18, .02, 280); }
-export function shot(){ if (!on()) return; const t = now(); osc('sine', 160, t, .12, .35, .002, 60); osc('sawtooth', 1800, t, .22, .06, .002, 600); noise(t, .1, .15, 'highpass', 3000, .7); }
-export function whoosh(){ if (!on()) return; noise(now(), .35, .2, 'bandpass', 500, 2, 3500, .12); }
-export function pop(){ if (!on()) return; osc('sine', 700, now(), .08, .2, .002, 1200); }
-export function sad(){ if (!on()) return; const t = now(); [311, 294, 277].forEach((f, i) => tromb(f, t + i * .42, .38)); tromb(262, t + 1.26, 1.0, true); }
-function tromb(f, t, dur, vib){ const o = ctx.createOscillator(), fl = ctx.createBiquadFilter(), g = ctx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t); if (vib){ const l = ctx.createOscillator(), lg = ctx.createGain(); l.frequency.value = 5.5; lg.gain.value = 7; l.connect(lg).connect(o.frequency); l.start(t); l.stop(t + dur + .1); }
-  fl.type = 'lowpass'; fl.frequency.value = 900; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.13, t + .04); g.gain.setValueAtTime(.13, t + dur - .08); g.gain.linearRampToValueAtTime(0, t + dur); o.connect(fl).connect(g).connect(master); o.start(t); o.stop(t + dur + .05); }
-export function win(){ if (!on()) return; const t = now(); [72, 76, 79, 84, 88].forEach((n, i) => { osc('sine', midi(n), t + i * .09, .5, .25); osc('triangle', midi(n + 12), t + i * .09, .18, .06); }); noise(t + .2, 1.6, .12, 'bandpass', 1400, .6, 2200, .4); }
-export function engineOn(){ if (!on() || engine) return; const t = now(), g = ctx.createGain(), fl = ctx.createBiquadFilter(), a = ctx.createOscillator(), b = ctx.createOscillator(); a.type = 'square'; b.type = 'sine'; a.frequency.value = 70; b.frequency.value = 35; fl.type = 'lowpass'; fl.frequency.value = 380;
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .2); a.connect(fl); b.connect(fl); fl.connect(g).connect(master); a.start(t); b.start(t); engine = { a, b, g }; }
-export function engineRev(v){ if (!engine) return; const f = 70 + Math.min(1, Math.abs(v) / 10) * 30; engine.a.frequency.setTargetAtTime(f, now(), .1); engine.b.frequency.setTargetAtTime(f / 2, now(), .1); }
-export function engineOff(){ if (!engine) return; const t = now(), e = engine; engine = null; e.g.gain.setTargetAtTime(0, t, .08); e.a.stop(t + .5); e.b.stop(t + .5); }
-// a light background beat for the exported video
-export function beat(play){ if (!ctx) return; if (!play){ clearInterval(beatTimer); beatTimer = null; return; } if (beatTimer) return;
-  const spb = 60 / 112 / 2; let next = now() + .1, k = 0; const bass = [43, 43, 40, 41];
-  beatTimer = setInterval(() => { while (next < now() + .2){ const s = k % 16, t = next;
-      if (s % 4 === 0) osc('sine', 120, t, .22, .4, .002, 45);
-      if (s % 8 === 4) noise(t, .12, .12, 'bandpass', 1500, .8);
-      if (s % 2 === 1) noise(t, .03, .04, 'highpass', 7000, .7);
-      if (s % 4 === 2) osc('triangle', midi(bass[Math.floor(k / 16) % 4]), t, .2, .12);
-      next += spb; k++; } }, 50); }
+// play one recorded sample
+function play(name, gain = 1, rate = 1, pan = 0, delay = 0, verb = .4){ const list = (bufs[name] || []).filter(Boolean); if (!list.length || !on()) return;
+  const c = G.ctx, s = c.createBufferSource(); s.buffer = list[Math.floor(Math.random() * list.length)]; s.playbackRate.value = rate * (.92 + Math.random() * .16);
+  const g = c.createGain(); g.gain.value = gain; const p = c.createStereoPanner(); p.pan.value = clamp(pan, -1, 1); s.connect(g).connect(p); p.connect(G.master); if (verb){ const v = c.createGain(); v.gain.value = verb; p.connect(v).connect(G.verb); } s.start(now() + delay); }
+function noiseHit(dur, gain, type, f, q = 1, f2 = null, pan = 0, delay = 0){ if (!on()) return; const c = G.ctx, t = now() + delay, s = c.createBufferSource(), fl = c.createBiquadFilter(), g = c.createGain(), p = c.createStereoPanner();
+  s.buffer = G.noise; fl.type = type; fl.frequency.setValueAtTime(f, t); if (f2) fl.frequency.exponentialRampToValueAtTime(f2, t + dur); fl.Q.value = q; p.pan.value = clamp(pan, -1, 1);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + .004); g.gain.exponentialRampToValueAtTime(.0001, t + dur); s.connect(fl).connect(g).connect(p).connect(G.master); const v = c.createGain(); v.gain.value = .5; p.connect(v).connect(G.verb); s.start(t, Math.random()); s.stop(t + dur + .05); }
+function sub(f0, f1, dur, gain, delay = 0){ if (!on()) return; const c = G.ctx, t = now() + delay, o = c.createOscillator(), g = c.createGain(); o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + dur); o.connect(g).connect(G.master); o.start(t); o.stop(t + dur + .05); }
 
-// Offline rendering for the video export: sounds are scheduled into an OfflineAudioContext on a virtual clock.
-export function offline(octx){ initAudio(); const live = { ctx, master, engine }; ctx = octx; master = octx.createGain(); master.gain.value = .8; master.connect(octx.destination); engine = null; offT = 0; lastSqueak = -1;
-  return { at(t){ offT = t; }, beat(t0, t1){ const spb = 60 / 112 / 2, bass = [43, 43, 40, 41]; for (let k = 0, t = t0; t < t1; k++, t += spb){ const s = k % 16;
-        if (s % 4 === 0) osc('sine', 120, t, .22, .4, .002, 45); if (s % 8 === 4) noise(t, .12, .12, 'bandpass', 1500, .8); if (s % 2 === 1) noise(t, .03, .04, 'highpass', 7000, .7); if (s % 4 === 2) osc('triangle', midi(bass[Math.floor(k / 16) % 4]), t, .2, .12); } },
-    done(){ engineOff(); ctx = live.ctx; master = live.master; engine = live.engine; offT = null; } }; }
+// ---- events
+export function hit(a, b, v, pan){ const m = [a, b], has = k => m.includes(k), k = clamp(v / 9, .05, 1);
+  if (has('metal')) play(v > 6 ? 'metalH' : v > 3 ? 'metalM' : 'metalL', .25 + k * .6, 1, pan);
+  else if (has('rock')) play(v > 4 ? 'rock' : 'pebble', .15 + k * .5, v > 4 ? 1 : 1.25, pan, 0, .25);
+  else if (has('ink')) play('ink', .2 + k * .55, 1.1, pan);
+  else if (has('tire')){ if (v > 2.2) play('thud', .15 + k * .5, .8, pan, 0, .2); }
+  else play('thud', .2 + k * .5, .7, pan); }
+export function boom(pan){ if (!on()) return; play('boom', 1, .85, pan, 0, .9); play('boomLow', 1, 1, pan * .5, 0, .6); sub(70, 28, 1.6, .9); noiseHit(2.2, .5, 'lowpass', 3200, .7, 140, pan);
+  for (let i = 0; i < 7; i++) play(i % 2 ? 'pebble' : 'metalL', .25, .9 + Math.random() * .4, pan + (Math.random() - .5) * .6, .35 + Math.random() * 1.2, .3); }
+export function crumble(k, pan){ play('rock', .5 + k * .5, .8, pan, 0, .5); sub(90, 40, .4, .35 * k + .1); noiseHit(.6, .25 * k + .05, 'lowpass', 900, .7, 200, pan); for (let i = 0; i < 4; i++) play('pebble', .2, 1.2, pan, .1 + Math.random() * .6, .2); }
+export function snap(pan){ play('ink', .8, 1.6, pan); noiseHit(.05, .4, 'highpass', 2500, .7, null, pan); }
+export function partoff(pan){ play('metalH', .8, .8, pan); play('glass', .45, 1, pan, .03); }
+export function dent(k, pan){ play('metalH', .4 + k * .6, .85, pan); }
+export function spark(pan){ play('metalL', .25, 1.7, pan, 0, .2); }
+export function shot(pan){ play('thud', .55, .55, pan); play('metalM', .3, .65, pan, .02); noiseHit(.25, .15, 'bandpass', 900, 1.2, 3000, pan); }
+export function fall(){ noiseHit(1.4, .18, 'bandpass', 300, 1.5, 1600, 0); }
+export function win(){ if (!on()) return; for (let i = 0; i < 6; i++) noiseHit(1.6 + Math.random(), .08, 'bandpass', 900 + Math.random() * 1600, .8, null, (Math.random() - .5) * 1.4, Math.random() * .4); for (let i = 0; i < 14; i++) noiseHit(.04, .12, 'bandpass', 1600, 1.5, null, (Math.random() - .5), .2 + Math.random() * 1.6); }
+export function whoosh(){ noiseHit(.35, .15, 'bandpass', 500, 2, 3500); }
+export function pop(){ play('plate', .25, 1.6, 0, 0, .1); }
+let lastSqueak = -1;
+export function squeak(){ if (!on() || now() - lastSqueak < .05) return; lastSqueak = now(); noiseHit(.07, .05, 'bandpass', 2200 + Math.random() * 2600, 5); }
+let crackleT = 0;
+// per-frame state of the continuous layers: engine, tyres, fire
+export function drive(d){ if (!G) return; const t = now(), e = G.eng, k = .08;
+  const running = d && d.on, rpm = running ? d.rpm : 0, f = 34 + Math.min(12, rpm) * 4.2;
+  e.e1.frequency.setTargetAtTime(f, t, k); e.e2.frequency.setTargetAtTime(f * 1.012, t, k); e.lfo.frequency.setTargetAtTime(f / 2, t, k); e.elp.frequency.setTargetAtTime(260 + rpm * 55, t, k);
+  e.eg.gain.setTargetAtTime(running ? .07 + Math.min(1, rpm / 9) * .06 : 0, t, .12);
+  const roll = d ? Math.min(1, d.roll / 9) : 0; G.tire.gn.gain.setTargetAtTime(roll * .22, t, .06); G.tire.fl.frequency.setTargetAtTime(250 + roll * 500, t, .1);
+  const fire = d ? d.fire : 0; G.fireL.gn.gain.setTargetAtTime(fire * .16, t, .2);
+  if (fire > 0 && on()){ crackleT += d.dt || 1 / 60; while (crackleT > 0){ crackleT -= 1 / (4 + fire * 18); noiseHit(.02 + Math.random() * .03, (.08 + Math.random() * .2) * fire, 'highpass', 1500 + Math.random() * 3000, .7, null, d.pan || 0, Math.random() * .05); } }
+  if (roll > .25 && on() && Math.random() < roll * .12) play('pebble', .06 * roll, 1.4, d.pan || 0, 0, 0); }
+
+// ---- offline rendering for the video export: sounds are scheduled into an OfflineAudioContext on a virtual clock
+export function offline(octx){ initAudio(); const saved = G; G = graph(octx); offT = 0; lastSqueak = -1;
+  return { at(t){ offT = t; }, done(){ G = saved; offT = null; } }; }
+export const ready = () => loading;
