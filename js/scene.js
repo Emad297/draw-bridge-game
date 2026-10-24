@@ -135,10 +135,16 @@ export class Diorama {
     const piece = (geo, m, x, y, z = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = o.receiveShadow = true; return o; };
     this.blockMeshes = [];
     for (const t of terrain(L)){
-      for (const c of t.core){ const x0 = Math.max(c.x0, -45), x1 = Math.min(c.x1, 45), y0 = Math.max(c.y0, t.top - 40), w = x1 - x0, h = c.y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + c.y1) / 2;
-        G.add(piece(worldBox(w, h, 5, cx, cy), wall, cx, cy)); if (c.cap) G.add(piece(rbox(w + (t.openL || t.openR ? 0 : .3), .35, 5.4, .1), capM, cx, t.top - .155)); }
-      for (const b of t.blocks){ const g = new THREE.Group(); g.position.set(b.x, b.y, 0); g.add(piece(worldBox(b.w, b.h, 5, b.x, b.y), wall, 0, 0));
-        if (b.top) g.add(piece(rbox(b.w, .35, 5.4, .06), capM, 0, b.h / 2 - .155)); G.add(g); this.blockMeshes.push(g); } }
+      // Cliff pieces never share a face: the stone under a cap stops exactly where the cap begins, and caps on the open
+      // edges stick out a little as a lip. (Stone and cap used to overlap with flush sides, which flickered on phones.)
+      const CAP = .34;
+      for (const c of t.core){ const x0 = Math.max(c.x0, -45), x1 = Math.min(c.x1, 45), y0 = Math.max(c.y0, t.top - 40), y1 = c.cap ? c.y1 - CAP : c.y1, w = x1 - x0, h = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+        G.add(piece(worldBox(w, h, 5, cx, cy), wall, cx, cy)); if (c.cap) G.add(piece(new THREE.BoxGeometry(w - .004, CAP, 5.4), capM, cx, t.top - CAP / 2)); }
+      for (const b of t.blocks){ const g = new THREE.Group(); g.position.set(b.x, b.y, 0);
+        const sh = b.top ? b.h - CAP : b.h, sy = b.top ? -CAP / 2 : 0; g.add(piece(worldBox(b.w, sh, 5, b.x, b.y + sy), wall, 0, sy));
+        if (b.top){ const lipL = t.openL && Math.abs(b.x - b.w / 2 - t.x0) < 1e-3 ? .12 : 0, lipR = t.openR && Math.abs(b.x + b.w / 2 - t.x1) < 1e-3 ? .12 : 0;
+          g.add(piece(new THREE.BoxGeometry(b.w - .004 + lipL + lipR, CAP, 5.4), capM, (lipR - lipL) / 2, b.h / 2 - CAP / 2)); }
+        G.add(g); this.blockMeshes.push(g); } }
     const fy = floorY(L); this.floor = fy;
     if (fy != null){ const gc = new THREE.Color(T.wall.colors[0]).lerp(new THREE.Color('#5d5044'), .55).multiplyScalar(.75), fl = piece(new THREE.BoxGeometry(160, 10, 60), mat(gc, { roughness: .95 }), 0, fy - 5, -14); G.add(fl);
       const rm = mat(gc.clone().multiplyScalar(.75), { roughness: .9, flatShading: true }), rr = RNG(7);
