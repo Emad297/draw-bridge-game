@@ -1,5 +1,5 @@
 // Tiny WebAudio synth. Everything goes through `master`, which can also feed the video recorder.
-let ctx = null, master = null, dest = null, noiseBuf = null, engine = null, beatTimer = null;
+let ctx = null, master = null, dest = null, noiseBuf = null, engine = null, beatTimer = null, offT = null;
 
 export function initAudio(){
   if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return ctx; }
@@ -9,13 +9,13 @@ export function initAudio(){
   return ctx;
 }
 export function audioStream(){ initAudio(); if (!dest){ dest = ctx.createMediaStreamDestination(); master.connect(dest); } return dest.stream; }
-const now = () => ctx.currentTime;
+const now = () => offT ?? ctx.currentTime;
 const midi = n => 440 * Math.pow(2, (n - 69) / 12);
 function env(g, t, a, peak, dec){ g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + dec); }
 function osc(type, f, t, dur, peak, a = .005, f2 = null, out = master){ const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur); env(g, t, a, peak, dur); o.connect(g).connect(out); o.start(t); o.stop(t + a + dur + .05); return o; }
 function noise(t, dur, peak, type = 'bandpass', f = 2000, q = 1, f2 = null, a = .005){ const s = ctx.createBufferSource(), fl = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noiseBuf; fl.type = type; fl.frequency.setValueAtTime(f, t); if (f2) fl.frequency.exponentialRampToValueAtTime(f2, t + dur); fl.Q.value = q; env(g, t, a, peak, dur); s.connect(fl).connect(g).connect(master); s.start(t, Math.random()); s.stop(t + a + dur + .05); }
 
-const on = () => ctx && ctx.state === 'running';
+const on = () => ctx && (offT != null || ctx.state === 'running');
 let lastSqueak = 0;
 export function squeak(){ if (!on() || now() - lastSqueak < .045) return; lastSqueak = now(); noise(now(), .06, .09, 'bandpass', 1800 + Math.random() * 3400, 6); }
 export function crash(i = .6){ if (!on()) return; const t = now(); osc('sine', 130, t, .25, .5 * i + .2, .002, 40); noise(t, .18, .35 * i + .1, 'lowpass', 900, .7); }
@@ -40,3 +40,9 @@ export function beat(play){ if (!ctx) return; if (!play){ clearInterval(beatTime
       if (s % 2 === 1) noise(t, .03, .04, 'highpass', 7000, .7);
       if (s % 4 === 2) osc('triangle', midi(bass[Math.floor(k / 16) % 4]), t, .2, .12);
       next += spb; k++; } }, 50); }
+
+// Offline rendering for the video export: sounds are scheduled into an OfflineAudioContext on a virtual clock.
+export function offline(octx){ initAudio(); const live = { ctx, master, engine }; ctx = octx; master = octx.createGain(); master.gain.value = .8; master.connect(octx.destination); engine = null; offT = 0; lastSqueak = -1;
+  return { at(t){ offT = t; }, beat(t0, t1){ const spb = 60 / 112 / 2, bass = [43, 43, 40, 41]; for (let k = 0, t = t0; t < t1; k++, t += spb){ const s = k % 16;
+        if (s % 4 === 0) osc('sine', 120, t, .22, .4, .002, 45); if (s % 8 === 4) noise(t, .12, .12, 'bandpass', 1500, .8); if (s % 2 === 1) noise(t, .03, .04, 'highpass', 7000, .7); if (s % 4 === 2) osc('triangle', midi(bass[Math.floor(k / 16) % 4]), t, .2, .12); } },
+    done(){ engineOff(); ctx = live.ctx; master = live.master; engine = live.engine; offT = null; } }; }

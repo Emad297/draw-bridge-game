@@ -2,6 +2,9 @@ import { LEVELS } from './levels.js';
 import { createSim, inkLength, DT } from './physics.js';
 import { Diorama } from './scene.js';
 import * as S from './audio.js';
+import { THEMES } from './themes.js';
+import { swatch } from './textures.js';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs';
 
 const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
 const q = v => Math.round(v * 100) / 100;
@@ -9,13 +12,18 @@ const store = { get(k, d){ try { return JSON.parse(localStorage.getItem(k)) ?? d
 let likes = store.get('dbg-likes', []), wins = store.get('dbg-wins', {});
 const saveLikes = () => { if (!store.set('dbg-likes', likes)){ likes.forEach((l, i) => { if (i < likes.length - 6) l.thumb = ''; }); store.set('dbg-likes', likes); } updateLikeCount(); };
 
-const view = new Diorama($('#game'));
+let ti = Math.max(0, THEMES.findIndex(t => t.id === store.get('dbg-theme', 'classic')));
+const themeOf = id => THEMES.find(t => t.id === id) || THEMES[0];
+const view = new Diorama($('#game'), THEMES[ti]);
 const fit = () => view.size(innerWidth, innerHeight); addEventListener('resize', fit); fit();
 
 let mode = 'menu', li = 0, level = LEVELS[0], strokes = [], cur = null, sim = null, st = null, acc = 0, clock = 0, shake = 0, winAt = null, endAt = null, lastResult = null, likedThis = null, drawing = false;
 
 // ---------------- menu
-function buildMenu(){ const g = $('#levels'); g.innerHTML = '';
+function setTheme(i){ ti = (i + THEMES.length) % THEMES.length; store.set('dbg-theme', THEMES[ti].id); view.setTheme(THEMES[ti]); if (mode === 'draw') view.setInk(strokes); document.querySelectorAll('.sw').forEach((b, k) => b.classList.toggle('on', k === ti)); }
+function buildThemes(){ const g = $('#themes'); if (g.children.length) return; THEMES.forEach((T, i) => { const b = document.createElement('button'); b.className = 'sw' + (i === ti ? ' on' : ''); b.title = T.name; b.setAttribute('aria-label', T.name); b.style.backgroundImage = `url(${swatch(T)})`; b.onclick = () => { setTheme(i); S.pop(); }; g.appendChild(b); }); }
+$('#theme').onclick = () => { setTheme(ti + 1); S.pop(); const n = $('#lvname'); n.textContent = THEMES[ti].name; clearTimeout(n._t); n._t = setTimeout(() => n.textContent = `${li + 1}. ${level.name}`, 1200); };
+function buildMenu(){ buildThemes(); const g = $('#levels'); g.innerHTML = '';
   LEVELS.forEach((L, i) => { const b = document.createElement('button'); b.className = 'lvl' + (wins[L.id] ? ' won' : '');
     const icon = { spinner: '⚙️', saw: '🪚', fan: '🌀' }[(L.hazards || [])[0]?.type] || '';
     b.innerHTML = `<b>${i + 1}</b><span>${L.name}</span><em>${icon}${wins[L.id] ? ' ✓' : ''}</em>`; b.onclick = () => startLevel(i); g.appendChild(b); }); updateLikeCount(); }
@@ -60,7 +68,7 @@ $('#next').onclick = () => startLevel(li + 1);
 $('#like').onclick = () => {
   if (likedThis){ likes = likes.filter(l => l.id !== likedThis); likedThis = null; $('#like').classList.remove('on'); saveLikes(); return; }
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6); likedThis = id;
-  likes.push({ id, levelId: level.id, strokes: JSON.parse(JSON.stringify(strokes)), result: lastResult, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
+  likes.push({ id, levelId: level.id, strokes: JSON.parse(JSON.stringify(strokes)), result: lastResult, theme: THEMES[ti].id, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
 function thumb(){ const c = document.createElement('canvas'), s = view.canvas, w = 240, h = Math.round(w * s.height / s.width); c.width = w; c.height = Math.min(h, 320); const g = c.getContext('2d'); g.drawImage(s, 0, (s.height - c.height * s.width / w) / 2, s.width, c.height * s.width / w, 0, 0, w, c.height); return c.toDataURL('image/jpeg', .7); }
 
 // ---------------- main loop
@@ -89,49 +97,87 @@ function renderLiked(){ const box = $('#likeList'); box.innerHTML = '';
   $('#saveVideo').disabled = !likes.length; }
 $('#saveVideo').onclick = () => exportVideo(likes.filter(l => LEVELS.some(L => L.id === l.levelId)));
 
-// ---------------- video export: replay every liked run, record canvas + sound
-const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+// ---------------- video export: replay every liked run frame by frame -> 1080x1920 60fps MP4 (only the 3D scene, no game UI)
+const FPS = 60, VW = 1080, VH = 1920, VBITRATE = 24e6;
 const ss = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); return x * x * (3 - 2 * x); };
-let exporter = null;
-function pickMime(){ for (const m of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; return ''; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let exporter = null, busy = false;
+// physics is deterministic, so a quick dry run tells us how long each clip lasts
+function planClip(it, last){ const L = LEVELS.find(x => x.id === it.levelId), len = inkLength(it.strokes), drawDur = Math.min(2.6, Math.max(.7, len / 11)), sm = createSim(L, it.strokes); let end = null;
+  while (sm.t < 40){ for (const [k] of sm.step()) if (k === 'end') end = sm.t; if (end != null && sm.t > end + (last ? 1.4 : .5)) break; }
+  return { it, L, len, drawDur, drawFrames: Math.round((drawDur + .35) * FPS), runFrames: Math.round(sm.t * FPS) }; }
+async function pickVideo(){ if (!window.VideoEncoder) return null; const base = { width: VW, height: VH, bitrate: VBITRATE, framerate: FPS, bitrateMode: 'variable', latencyMode: 'quality' };
+  for (const [codec, mux] of [['avc1.640034', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.420034', 'avc'], ['vp09.00.51.08', 'vp9']]){ const c = { ...base, codec, ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) }; try { if ((await VideoEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
+async function pickAudio(){ if (!window.AudioEncoder) return null; for (const [codec, mux, bitrate] of [['mp4a.40.2', 'aac', 256000], ['opus', 'opus', 192000]]){ const c = { codec, sampleRate: 48000, numberOfChannels: 2, bitrate }; try { if ((await AudioEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
+function setupExport(){ S.initAudio(); mode = 'export'; show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out')); prog(0);
+  const out = $('#out'), g = out.getContext('2d'); out.width = VW; out.height = VH;
+  if (!exporter){ exporter = new Diorama(document.createElement('canvas'), THEMES[0]); exporter.size(VW, VH, 1); exporter.margin = 1.08; }
+  const k = VW / 720, compose = (cap, flash) => { g.drawImage(exporter.canvas, 0, 0, VW, VH);
+    if (cap){ g.font = `800 ${46 * k}px system-ui, -apple-system, Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; const tw = Math.min(VW - 60 * k, g.measureText(cap).width + 56 * k); g.fillStyle = 'rgba(0,0,0,.85)'; rr(g, (VW - tw) / 2, 150 * k, tw, 84 * k, 18 * k); g.fill(); g.fillStyle = '#fff'; g.fillText(cap, VW / 2, 193 * k, VW - 100 * k); }
+    if (flash > 0){ g.fillStyle = `rgba(255,255,255,${flash})`; g.fillRect(0, 0, VW, VH); } };
+  return { out, compose }; }
+// renders one clip; `frame()` is awaited after every rendered frame
+async function playClip(p, i, compose, frame, sfx){ const D = exporter, it = p.it; D.setTheme(themeOf(it.theme)); D.setLevel(p.L); D.drawMode = true; let clk = 0;
+  for (let n = 0; n < p.drawFrames; n++){ const t = n / FPS; clk = t; sfx.at?.();
+    const upto = p.len * ss(.15, p.drawDur, t), tip = D.setInk(it.strokes, upto); D.pen.visible = !!tip && t > .1 && t < p.drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < p.len) S.squeak();
+    D.render(clk, null, {}); compose(it.caption, i ? 1 - ss(0, .3, t) : 0); if (await frame()) return; }
+  D.pen.visible = false; D.setInk(it.strokes); D.drawMode = false;
+  const sm = createSim(p.L, it.strokes); let wAt = null, sh = 0; sfx.at?.(); S.engineOn();
+  for (let n = 0; n < p.runFrames; n++){ clk += 1 / FPS; sfx.at?.();
+    for (const [k, v] of sm.step()){ if (k === 'shot') S.shot(); if (k === 'crash'){ S.crash(v); sh = Math.max(sh, v * .35); } if (k === 'fall') S.fall(); if (k === 'win'){ wAt = sm.t; S.win(); S.engineOff(); } if (k === 'end'){ S.engineOff(); if (v !== 'win') S.sad(); } }
+    const s = sm.state(); sh *= Math.pow(.02, 1 / FPS); S.engineRev(s.car[0]); D.render(clk, s, { winAt: wAt, shake: sh }); compose(it.caption, 0); if (await frame()) return; }
+  S.engineOff(); }
 async function exportVideo(items){
-  if (!items.length || exporter) return; S.initAudio(); mode = 'export'; show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out'));
-  const W = 720, H = 1280, out = $('#out'), g = out.getContext('2d'); out.width = W; out.height = H;
-  if (!exporter){ const c = document.createElement('canvas'); exporter = new Diorama(c); exporter.size(W, H, 1); }
-  const D = exporter, stream = out.captureStream(30); S.audioStream().getAudioTracks().forEach(t => stream.addTrack(t));
-  const mime = pickMime(), rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 6e6 } : {}), chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  if (!items.length || busy) return; busy = true; let cancel = false; $('#closeExp').onclick = () => { cancel = true; };
+  try {
+    const { out, compose } = setupExport(), vc = await pickVideo();
+    const ac = await pickAudio();
+    if (!vc || !ac) return await exportRealtime(items, out, compose, () => cancel);
+    const plan = items.map((it, i) => planClip(it, i === items.length - 1)), total = plan.reduce((a, p) => a + p.drawFrames + p.runFrames, 0), dur = total / FPS;
+    const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: vc[1], width: VW, height: VH, frameRate: FPS }, ...(ac ? { audio: { codec: ac[1], numberOfChannels: 2, sampleRate: 48000 } } : {}), fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+    let err = null; const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => err = e }); venc.configure(vc[0]);
+    const octx = new OfflineAudioContext(2, Math.ceil((dur + .5) * 48000), 48000), A = S.offline(octx); A.beat(0, dur);
+    let f = 0; const sfx = { at: () => A.at(f / FPS) };
+    const frame = async () => { const vf = new VideoFrame(out, { timestamp: Math.round(f * 1e6 / FPS), duration: Math.round(1e6 / FPS) }); venc.encode(vf, { keyFrame: f % (FPS * 2) === 0 }); vf.close(); f++;
+      while (venc.encodeQueueSize > 4) await sleep(2); if (f % 3 === 0){ prog(f / total * .95); await sleep(0); } if (err) throw err; return cancel; };
+    for (let i = 0; i < plan.length && !cancel; i++) await playClip(plan[i], i, compose, frame, sfx);
+    A.done();
+    if (cancel){ venc.close(); return closeExport(); }
+    await venc.flush(); if (err) throw err;
+    if (ac){ const buf = await octx.startRendering(), aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => err = e }); aenc.configure(ac[0]);
+      const L0 = buf.getChannelData(0), R0 = buf.getChannelData(1), N = Math.min(buf.length, Math.ceil(dur * 48000));
+      for (let o = 0; o < N; o += 4800){ const n = Math.min(4800, N - o), d = new Float32Array(n * 2); d.set(L0.subarray(o, o + n), 0); d.set(R0.subarray(o, o + n), n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: 48000, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(o * 1e6 / 48000), data: d }); aenc.encode(ad); ad.close(); }
+      await aenc.flush(); if (err) throw err; }
+    muxer.finalize(); finish(new Blob([muxer.target.buffer], { type: 'video/mp4' }), 'mp4');
+  } catch (e){ console.error(e); alertBox('Video failed: ' + (e.message || e)); closeExport(); }
+  finally { busy = false; } }
+// fallback for browsers without WebCodecs: record in real time
+async function exportRealtime(items, out, compose, cancelled){
+  const stream = out.captureStream(FPS); S.audioStream().getAudioTracks().forEach(t => stream.addTrack(t));
+  const mime = ['video/mp4;codecs=avc1.640034,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: VBITRATE, audioBitsPerSecond: 256000 }), chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   const done = new Promise(r => rec.onstop = r); rec.start(500); S.beat(true);
-  let cancel = false; $('#closeExp').onclick = () => { cancel = true; };
-  const compose = (cap, flash) => { g.drawImage(D.canvas, 0, 0, W, H);
-    if (cap){ g.font = '800 46px system-ui, -apple-system, Segoe UI, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; const tw = Math.min(W - 60, g.measureText(cap).width + 56); g.fillStyle = 'rgba(0,0,0,.85)'; rr(g, (W - tw) / 2, 150, tw, 84, 18); g.fill(); g.fillStyle = '#fff'; g.fillText(cap, W / 2, 193, W - 100); }
-    if (flash > 0){ g.fillStyle = `rgba(255,255,255,${flash})`; g.fillRect(0, 0, W, H); } };
-  let clk = 0, total = 0; const est = items.reduce((a, l) => a + 2 + 6, 0);
-  for (let i = 0; i < items.length && !cancel; i++){ const it = items[i], L = LEVELS.find(x => x.id === it.levelId); D.setLevel(L); D.drawMode = true;
-    // 1) the pen draws it
-    const len = inkLength(it.strokes), drawDur = Math.min(2.6, Math.max(.7, len / 11)); let t0 = performance.now(), t = 0;
-    while (t < drawDur + .35 && !cancel){ await nextFrame(); const t1 = performance.now(), dt = Math.min(.05, (t1 - t0) / 1000); t0 = t1; t += dt; clk += dt; total += dt;
-      const upto = len * ss(.15, drawDur, t), tip = D.setInk(it.strokes, upto); D.pen.visible = !!tip && t > .1 && t < drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < len) S.squeak();
-      D.render(clk, null, {}); compose(it.caption, i ? 1 - ss(0, .3, t) : 0); prog(total / est); }
-    D.pen.visible = false; D.setInk(it.strokes); D.drawMode = false;
-    // 2) the run, replayed exactly
-    sim = createSim(L, it.strokes); let s = sim.state(), a = 0, wAt = null, eAt = null, sh = 0; S.engineOn(); t0 = performance.now();
-    while (!cancel){ await nextFrame(); const t1 = performance.now(), dt = Math.min(.05, (t1 - t0) / 1000); t0 = t1; clk += dt; total += dt; a += dt;
-      while (a >= DT){ for (const [k, v] of sim.step()){ if (k === 'shot') S.shot(); if (k === 'crash'){ S.crash(v); sh = Math.max(sh, v * .35); } if (k === 'fall') S.fall(); if (k === 'win'){ wAt = sim.t; S.win(); S.engineOff(); } if (k === 'end'){ eAt = sim.t; S.engineOff(); if (v !== 'win') S.sad(); } } a -= DT; }
-      s = sim.state(); sh *= Math.pow(.02, dt); S.engineRev(s.car[0]); D.render(clk, s, { winAt: wAt, shake: sh }); compose(it.caption, 0); prog(total / est);
-      if (eAt != null && sim.t > eAt + (i === items.length - 1 ? 1.2 : .5)) break; } S.engineOff(); }
-  S.beat(false); sim = null; rec.stop(); await done; show($('#out'), false);
-  if (cancel){ closeExport(); return; }
-  const type = (mime || 'video/webm').split(';')[0], blob = new Blob(chunks, { type }), url = URL.createObjectURL(blob), ext = type.includes('mp4') ? 'mp4' : 'webm', name = `draw-bridge-${new Date().toISOString().slice(0, 10)}.${ext}`;
-  const v = $('#vid'); v.src = url; show(v); prog(1); show($('#expDone'));
+  const plan = items.map((it, i) => planClip(it, i === items.length - 1)), total = plan.reduce((a, p) => a + p.drawFrames + p.runFrames, 0); let f = 0, t0 = performance.now();
+  const frame = async () => { f++; prog(f / total); const due = t0 + f * 1000 / FPS; while (performance.now() < due) await new Promise(r => requestAnimationFrame(r)); return cancelled(); };
+  for (let i = 0; i < plan.length && !cancelled(); i++) await playClip(plan[i], i, compose, frame, {});
+  S.beat(false); rec.stop(); await done;
+  if (cancelled()) return closeExport();
+  const type = (mime || 'video/webm').split(';')[0]; finish(new Blob(chunks, { type }), type.includes('mp4') ? 'mp4' : 'webm'); }
+function finish(blob, ext){ show($('#out'), false); const url = URL.createObjectURL(blob), name = `draw-bridge-${new Date().toISOString().slice(0, 10)}.${ext}`;
+  const v = $('#vid'); v.src = url; show(v); prog(1); show($('#expDone')); window.__lastVideo = blob;
   $('#dl').onclick = async () => { const dls = window.claude?.use ? await window.claude.use('downloads').catch(() => null) : null;
     if (dls){ try { await dls.save({ filename: name, data: blob }); } catch (e) {} return; }
     const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
-  const file = new File([blob], name, { type }); $('#share').style.display = navigator.canShare && navigator.canShare({ files: [file] }) ? '' : 'none';
+  const file = new File([blob], name, { type: blob.type }); $('#share').style.display = navigator.canShare && navigator.canShare({ files: [file] }) ? '' : 'none';
   $('#share').onclick = () => navigator.share({ files: [file] }).catch(() => {});
   $('#closeExp').onclick = closeExport; }
-function closeExport(){ show($('#export'), false); const v = $('#vid'); v.pause(); openLiked(); }
+function alertBox(msg){ const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 4000); }
+function closeExport(){ show($('#export'), false); const v = $('#vid'); v.pause(); mode = 'liked'; openLiked(); }
 function prog(f){ $('#prog i').style.width = Math.min(100, f * 100) + '%'; }
 function rr(g, x, y, w, h, r){ g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
 
+// stop iOS pinch / double-tap zoom from fighting the drawing
+['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
 toMenu();
 window.__app = { go, get mode(){ return mode; }, get strokes(){ return strokes; }, set strokes(v){ strokes = v; view.setInk(v); meter(); }, view, startLevel, exportVideo, get likes(){ return likes; } };
