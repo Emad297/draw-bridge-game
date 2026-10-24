@@ -122,7 +122,10 @@ async function exportVideo(items){
   S.beat(false); sim = null; rec.stop(); await done; show($('#out'), false);
   if (cancel){ closeExport(); return; }
   const type = (mime || 'video/webm').split(';')[0], blob = new Blob(chunks, { type }), url = URL.createObjectURL(blob), ext = type.includes('mp4') ? 'mp4' : 'webm', name = `draw-bridge-${new Date().toISOString().slice(0, 10)}.${ext}`;
-  const v = $('#vid'); v.src = url; show(v); prog(1); const dl = $('#dl'); dl.href = url; dl.download = name; show($('#expDone'));
+  const v = $('#vid'); v.src = url; show(v); prog(1); show($('#expDone'));
+  $('#dl').onclick = async () => { const dls = window.claude?.use ? await window.claude.use('downloads').catch(() => null) : null;
+    if (dls){ try { await dls.save({ filename: name, data: blob }); } catch (e) {} return; }
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); };
   const file = new File([blob], name, { type }); $('#share').style.display = navigator.canShare && navigator.canShare({ files: [file] }) ? '' : 'none';
   $('#share').onclick = () => navigator.share({ files: [file] }).catch(() => {});
   $('#closeExp').onclick = closeExport; }
