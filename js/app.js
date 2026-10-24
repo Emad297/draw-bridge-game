@@ -1,10 +1,10 @@
-import { LEVELS } from './levels.js?v=20261024200358';
-import { createSim, inkLength, fitPoint, DT } from './physics.js?v=20261024200358';
-import { Diorama } from './scene.js?v=20261024200358';
-import * as S from './audio.js?v=20261024200358';
-import { THEMES } from './themes.js?v=20261024200358';
-import { swatch } from './textures.js?v=20261024200358';
-import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261024200358';
+import { LEVELS } from './levels.js';
+import { createSim, inkLength, fitPoint, DT, initPhysics, MATERIALS, MATERIAL_IDS } from './physics.js';
+import { Diorama } from './scene.js';
+import * as S from './audio.js';
+import { THEMES } from './themes.js';
+import { swatch } from './textures.js';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs';
 
 const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
 const q = v => Math.round(v * 100) / 100;
@@ -17,10 +17,10 @@ const themeOf = id => THEMES.find(t => t.id === id) || THEMES[0];
 const view = new Diorama($('#game'), THEMES[ti]);
 const fit = () => view.size(innerWidth, innerHeight); addEventListener('resize', fit); fit();
 
-let mode = 'menu', li = 0, level = LEVELS[0], strokes = [], cur = null, sim = null, st = null, acc = 0, clock = 0, shake = 0, winAt = null, endAt = null, lastResult = null, likedThis = null, drawing = false;
+let mode = 'menu', li = 0, level = LEVELS[0], strokes = [], mats = [], penMat = store.get('dbg-pen', 'marker'), cur = null, sim = null, st = null, acc = 0, clock = 0, shake = 0, winAt = null, endAt = null, lastResult = null, likedThis = null, drawing = false;
 
 // ---------------- menu
-function setTheme(i){ ti = (i + THEMES.length) % THEMES.length; store.set('dbg-theme', THEMES[ti].id); view.setTheme(THEMES[ti]); if (mode === 'draw') view.setInk(strokes); document.querySelectorAll('.sw').forEach((b, k) => b.classList.toggle('on', k === ti)); }
+function setTheme(i){ ti = (i + THEMES.length) % THEMES.length; store.set('dbg-theme', THEMES[ti].id); view.setTheme(THEMES[ti]); if (mode === 'draw') view.setInk(strokes, mats); document.querySelectorAll('.sw').forEach((b, k) => b.classList.toggle('on', k === ti)); }
 function buildThemes(){ const g = $('#themes'); if (g.children.length) return; THEMES.forEach((T, i) => { const b = document.createElement('button'); b.className = 'sw' + (i === ti ? ' on' : ''); b.title = T.name; b.setAttribute('aria-label', T.name); b.style.backgroundImage = `url(${swatch(T)})`; b.onclick = () => { setTheme(i); S.pop(); }; g.appendChild(b); }); }
 $('#theme').onclick = () => { setTheme(ti + 1); S.pop(); const n = $('#lvname'); n.textContent = THEMES[ti].name; clearTimeout(n._t); n._t = setTimeout(() => n.textContent = `${li + 1}. ${level.name}`, 1200); };
 function buildMenu(){ buildThemes(); const g = $('#levels'); g.innerHTML = '';
@@ -28,31 +28,38 @@ function buildMenu(){ buildThemes(); const g = $('#levels'); g.innerHTML = '';
     const icon = { spinner: '⚙️', saw: '🪚', fan: '🌀' }[(L.hazards || [])[0]?.type] || '';
     b.innerHTML = `<b>${i + 1}</b><span>${L.name}</span><em>${icon}${wins[L.id] ? ' ✓' : ''}</em>`; b.onclick = () => startLevel(i); g.appendChild(b); }); updateLikeCount(); }
 function updateLikeCount(){ $('#likedBtn').textContent = `👍 ${likes.length}`; $('#likedBtn').disabled = !likes.length; }
-function toMenu(){ mode = 'menu'; S.drive(null); [$('#hud'), $('#tools'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); buildMenu(); setLevel(li); }
+function toMenu(){ mode = 'menu'; endSim(); st = null; S.drive(null); [$('#hud'), $('#tools'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); buildMenu(); setLevel(li); }
 
 // ---------------- level / drawing
 function setLevel(i){ li = i; level = LEVELS[i]; view.setLevel(level); }
-function startLevel(i){ S.initAudio(); setLevel(i); strokes = []; toDraw(); }
-function toDraw(){ mode = 'draw'; sim = null; st = null; winAt = endAt = null; S.drive(null); view.resetCar(); view.clearFx(); view.setLevel(level); view.setInk(strokes);
+function startLevel(i){ S.initAudio(); setLevel(i); strokes = []; mats = []; toDraw(); }
+const cliffOf = T => ({ zf: T.env?.cliff?.zf ?? 2.5, zb: T.env?.cliff?.zb ?? -2.5 });
+const endSim = () => { if (sim){ sim.dispose(); sim = null; } };
+function toDraw(){ mode = 'draw'; endSim(); st = null; winAt = endAt = null; S.drive(null); view.resetCar(); view.clearFx(); view.setLevel(level); view.setInk(strokes, mats); buildPens();
   show($('#menu'), false); show($('#result'), false); show($('#liked'), false); show($('#hud')); show($('#tools')); $('#lvname').textContent = `${li + 1}. ${level.name}`; meter(); }
 const used = () => inkLength(strokes);
 function meter(){ const f = Math.max(0, 1 - used() / level.ink); $('#meter i').style.width = (f * 100) + '%'; $('#meter').classList.toggle('low', f < .15); $('#go').disabled = false; $('#undo').disabled = $('#clear').disabled = !strokes.length; }
 const cv = $('#game');
 cv.addEventListener('pointerdown', e => { S.initAudio(); if (mode !== 'draw' || used() >= level.ink - .05) return; let p = view.toWorld(e.clientX, e.clientY); if (!p) return; p = fitPoint(level, p[0], p[1]);
-  cv.setPointerCapture(e.pointerId); drawing = true; cur = [p]; strokes.push(cur); view.beginStroke(p[0], p[1]); view.pen.visible = true; view.pen.position.set(p[0], p[1], 0); meter(); });
+  cv.setPointerCapture(e.pointerId); drawing = true; cur = [p]; strokes.push(cur); mats.push(penMat); view.setStroke(strokes.length - 1, cur, penMat); view.pen.visible = true; view.pen.position.set(p[0], p[1], 0); meter(); });
 cv.addEventListener('pointermove', e => { if (!drawing) return; const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   for (const ev of evs){ let p = view.toWorld(ev.clientX, ev.clientY); if (!p) continue; p = fitPoint(level, p[0], p[1]); const l = cur[cur.length - 1]; let d = Math.hypot(p[0] - l[0], p[1] - l[1]); if (d < .14) continue;
     const left = level.ink - used(); if (left <= .02){ endStroke(); return; } let x = p[0], y = p[1]; if (d > left){ const k = left / d; x = l[0] + (x - l[0]) * k; y = l[1] + (y - l[1]) * k; }
-    const pt = fitPoint(level, x, y); if (pt[0] === l[0] && pt[1] === l[1]) continue; cur.push(pt); view.addInkSegment(l[0], l[1], pt[0], pt[1]); view.pen.position.set(pt[0], pt[1], 0); S.squeak(); } meter(); });
+    const pt = fitPoint(level, x, y); if (pt[0] === l[0] && pt[1] === l[1]) continue; cur.push(pt); dirty = true; view.pen.position.set(pt[0], pt[1], 0); S.squeak(); } if (dirty){ view.setStroke(strokes.length - 1, cur, penMat); dirty = false; } meter(); });
+let dirty = false;
 const endStroke = () => { if (!drawing) return; drawing = false; view.pen.visible = false; meter(); };
 cv.addEventListener('pointerup', endStroke); cv.addEventListener('pointercancel', endStroke);
-$('#undo').onclick = () => { strokes.pop(); view.setInk(strokes); meter(); S.pop(); };
-$('#clear').onclick = () => { strokes = []; view.setInk(strokes); meter(); S.whoosh(); };
+$('#undo').onclick = () => { strokes.pop(); mats.pop(); view.setInk(strokes, mats); meter(); S.pop(); };
+$('#clear').onclick = () => { strokes = []; mats = []; view.setInk(strokes, mats); meter(); S.whoosh(); };
 $('#back').onclick = () => mode === 'run' || mode === 'result' ? toDraw() : toMenu();
 addEventListener('keydown', e => { if (mode === 'draw' && (e.ctrlKey || e.metaKey) && e.key === 'z'){ $('#undo').onclick(); e.preventDefault(); } if (mode === 'draw' && e.key === 'Enter') go(); });
 
+// ---------------- pen materials
+function buildPens(){ const box = $('#mats'); if (!box.children.length) MATERIAL_IDS.forEach(id => { const b = document.createElement('button'); b.className = 'pen'; b.dataset.m = id; b.title = MATERIALS[id].name; b.setAttribute('aria-label', MATERIALS[id].name); b.textContent = MATERIALS[id].icon; b.onclick = () => { setPen(id); S.pop(); }; box.appendChild(b); });
+  box.querySelectorAll('.pen').forEach(b => b.classList.toggle('on', b.dataset.m === penMat)); }
+function setPen(id){ penMat = id; store.set('dbg-pen', id); buildPens(); const n = $('#lvname'); n.textContent = MATERIALS[id].name; clearTimeout(n._t); n._t = setTimeout(() => n.textContent = `${li + 1}. ${level.name}`, 1200); }
 // ---------------- run
-function go(){ if (mode !== 'draw') return; endStroke(); S.initAudio(); mode = 'run'; sim = createSim(level, strokes); st = sim.state(); acc = 0; shake = 0; winAt = endAt = null; lastResult = null; likedThis = null; pending = [];
+function go(){ if (mode !== 'draw') return; endStroke(); S.initAudio(); mode = 'run'; endSim(); sim = createSim(level, strokes, { mats, ...cliffOf(THEMES[ti]) }); st = sim.state(); acc = 0; shake = 0; winAt = endAt = null; lastResult = null; likedThis = null; pending = [];
   show($('#tools'), false); }
 $('#go').onclick = go;
 let pending = [], boomT = 0;
@@ -61,7 +68,8 @@ function react(e, camX, simT){ const [k, a, b, c, d, f] = e, pan = x => (x - cam
   if (k === 'hit') S.hit(a, b, c, pan(d));
   if (k === 'boom'){ S.boom(pan(a)); return .9; }
   if (k === 'crumble'){ S.crumble(c, pan(a)); return .12 + c * .2; }
-  if (k === 'snap') S.snap(pan(a));
+  if (k === 'snap') S.snap(pan(a), c);
+  if (k === 'shatter') S.shatter(pan(a), c);
   if (k === 'partoff') S.partoff(pan(a));
   if (k === 'dent') S.dent(a, pan(b));
   if (k === 'spark') S.spark(pan(a));
@@ -80,7 +88,7 @@ $('#next').onclick = () => startLevel(li + 1);
 $('#like').onclick = () => {
   if (likedThis){ likes = likes.filter(l => l.id !== likedThis); likedThis = null; $('#like').classList.remove('on'); saveLikes(); return; }
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6); likedThis = id;
-  likes.push({ id, levelId: level.id, strokes: JSON.parse(JSON.stringify(strokes)), result: lastResult, theme: THEMES[ti].id, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
+  likes.push({ id, levelId: level.id, strokes: JSON.parse(JSON.stringify(strokes)), mats: mats.slice(), result: lastResult, theme: THEMES[ti].id, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
 function thumb(){ const c = document.createElement('canvas'), s = view.canvas, w = 240, h = Math.round(w * s.height / s.width); c.width = w; c.height = Math.min(h, 320); const g = c.getContext('2d'); g.drawImage(s, 0, (s.height - c.height * s.width / w) / 2, s.width, c.height * s.width / w, 0, 0, w, c.height); return c.toDataURL('image/jpeg', .7); }
 
 // ---------------- main loop
@@ -89,7 +97,7 @@ function frame(now){ const dt = Math.min(.05, (now - last) / 1000); last = now; 
   if ((mode === 'run' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const ev = sim.step(); handle(ev, mode === 'run'); acc -= DT; } st = sim.state(); }
   if (mode !== 'export') S.drive(st && { on: !st.exploded && !st.won && st.t > .4, rpm: st.rpm, roll: st.roll, fire: st.exploded ? Math.max(0, 1 - (st.t - boomT) / 9) : st.fire ? .7 : 0, dt, pan: view.camState ? (st.car[0] - view.camState.tgt.x) / 9 : 0 });
   shake *= Math.pow(.02, dt);
-  if (mode !== 'export'){ view.render(clock, st, { winAt, shake, events: pending }); pending = []; }
+  if (mode !== 'export' && view.level){ view.render(clock, st, { winAt, shake, events: pending }); pending = []; }
   requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 
@@ -116,15 +124,15 @@ const ss = (a, b, x) => { x = Math.min(1, Math.max(0, (x - a) / (b - a))); retur
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let exporter = null, busy = false;
 // physics is deterministic, so a quick dry run tells us how long each clip lasts
-function planClip(it, last){ const L = LEVELS.find(x => x.id === it.levelId), len = inkLength(it.strokes), drawDur = Math.min(2.6, Math.max(.7, len / 11)), sm = createSim(L, it.strokes); let end = null;
-  while (sm.t < 40){ for (const [k] of sm.step()) if (k === 'end') end = sm.t; if (end != null && sm.t > end + (last ? 1.4 : .5)) break; }
-  return { it, L, len, drawDur, drawFrames: Math.round((drawDur + .35) * FPS), runFrames: Math.round(sm.t * FPS) }; }
+function planClip(it, last){ const L = LEVELS.find(x => x.id === it.levelId), len = inkLength(it.strokes), drawDur = Math.min(2.6, Math.max(.7, len / 11)), sm = createSim(L, it.strokes, { mats: it.mats, ...cliffOf(themeOf(it.theme)) }); let end = null;
+  while (sm.t < 40){ for (const [k] of sm.step()) if (k === 'end') end = sm.t; if (end != null && sm.t > end + (last ? 1.4 : .5)) break; } const runT = sm.t; sm.dispose();
+  return { it, L, len, drawDur, drawFrames: Math.round((drawDur + .35) * FPS), runFrames: Math.round(runT * FPS) }; }
 async function pickVideo(){ if (!window.VideoEncoder) return null; const base = { width: VW, height: VH, bitrate: VBITRATE, framerate: FPS, bitrateMode: 'variable', latencyMode: 'quality' };
   for (const [codec, mux] of [['avc1.640034', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.420034', 'avc'], ['vp09.00.51.08', 'vp9']]){ const c = { ...base, codec, ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) }; try { if ((await VideoEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
 async function pickAudio(){ if (!window.AudioEncoder) return null; for (const [codec, mux, bitrate] of [['mp4a.40.2', 'aac', 256000], ['opus', 'opus', 192000]]){ const c = { codec, sampleRate: 48000, numberOfChannels: 2, bitrate }; try { if ((await AudioEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
 function setupExport(){ S.initAudio(); mode = 'export'; show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out')); prog(0);
   const out = $('#out'), g = out.getContext('2d'); out.width = VW; out.height = VH;
-  if (!exporter){ exporter = new Diorama(document.createElement('canvas'), THEMES[0]); exporter.size(VW, VH, 1); exporter.margin = 1.08; }
+  if (!exporter){ exporter = new Diorama(document.createElement('canvas'), THEMES[0]); exporter.size(VW, VH, 1.5); exporter.sun.shadow.mapSize.set(4096, 4096); /* rendered 1.5× larger and scaled down: smoother edges in the video */ exporter.margin = 1.08; }
   const k = VW / 720, compose = (cap, flash) => { g.drawImage(exporter.canvas, 0, 0, VW, VH);
     if (cap){ g.font = `800 ${46 * k}px system-ui, -apple-system, Segoe UI, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; const tw = Math.min(VW - 60 * k, g.measureText(cap).width + 56 * k); g.fillStyle = 'rgba(0,0,0,.85)'; rr(g, (VW - tw) / 2, 150 * k, tw, 84 * k, 18 * k); g.fill(); g.fillStyle = '#fff'; g.fillText(cap, VW / 2, 193 * k, VW - 100 * k); }
     if (flash > 0){ g.fillStyle = `rgba(255,255,255,${flash})`; g.fillRect(0, 0, VW, VH); } };
@@ -132,10 +140,10 @@ function setupExport(){ S.initAudio(); mode = 'export'; show($('#liked'), false)
 // renders one clip; `frame()` is awaited after every rendered frame
 async function playClip(p, i, compose, frame, sfx){ const D = exporter, it = p.it; D.setTheme(themeOf(it.theme)); D.setLevel(p.L); D.resetCar(); D.clearFx(); let clk = 0;
   for (let n = 0; n < p.drawFrames; n++){ const t = n / FPS; clk = t; sfx.at?.();
-    const upto = p.len * ss(.15, p.drawDur, t), tip = D.setInk(it.strokes, upto); D.pen.visible = !!tip && t > .1 && t < p.drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < p.len) S.squeak();
+    const upto = p.len * ss(.15, p.drawDur, t), tip = D.setInk(it.strokes, it.mats || [], upto); D.pen.visible = !!tip && t > .1 && t < p.drawDur + .1; if (tip) D.pen.position.set(tip[0], tip[1], 0); if (upto > 0 && upto < p.len) S.squeak();
     D.render(clk, null, {}); compose(it.caption, i ? 1 - ss(0, .3, t) : 0); if (await frame()) return; }
-  D.pen.visible = false; D.setInk(it.strokes);
-  const sm = createSim(p.L, it.strokes); let wAt = null, sh = 0, boomT = null; sfx.at?.();
+  D.pen.visible = false; D.setInk(it.strokes, it.mats || []);
+  const sm = createSim(p.L, it.strokes, { mats: it.mats, ...cliffOf(themeOf(it.theme)) }); let wAt = null, sh = 0, boomT = null; sfx.at?.();
   for (let n = 0; n < p.runFrames; n++){ clk += 1 / FPS; sfx.at?.();
     const evs = sm.step(), camX = D.camState ? D.camState.tgt.x : 0; for (const e of evs){ sh = Math.max(sh, react(e, camX)); if (e[0] === 'win') wAt = sm.t; if (e[0] === 'boom') boomT = sm.t; }
     const s = sm.state(); sh *= Math.pow(.02, 1 / FPS);
@@ -194,5 +202,6 @@ function rr(g, x, y, w, h, r){ g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w,
 
 // stop iOS pinch / double-tap zoom from fighting the drawing
 ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+await initPhysics();
 toMenu(); requestAnimationFrame(() => document.body.classList.add('ready'));
-window.__app = { go, get mode(){ return mode; }, get strokes(){ return strokes; }, set strokes(v){ strokes = v; view.setInk(v); meter(); }, view, startLevel, exportVideo, get likes(){ return likes; } };
+window.__app = { go, get mode(){ return mode; }, get strokes(){ return strokes; }, set strokes(v){ strokes = v; mats = v.map(() => penMat); view.setInk(v, mats); meter(); }, setPen, get mats(){ return mats; }, view, startLevel, exportVideo, get likes(){ return likes; } };

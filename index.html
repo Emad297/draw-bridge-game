@@ -7,9 +7,8 @@
 <title>Draw Bridge</title>
 <script>/* if this page is an old cached copy, reload the newest version */
 fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261024200358' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
-<link rel="stylesheet" href="css/style.css?v=20261024200358">
-<script src="vendor/planck.min.js?v=20261024200358"></script>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261024200358" } }</script>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -29,6 +28,7 @@ fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.tex
 </div>
 
 <div id="tools" class="hidden">
+  <div id="mats"></div>
   <button id="undo" class="round" aria-label="Undo">↶</button>
   <button id="clear" class="round" aria-label="Clear">✕</button>
   <button id="go" class="go">GO</button>
@@ -58,6 +58,6 @@ fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.tex
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=20261024200358"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

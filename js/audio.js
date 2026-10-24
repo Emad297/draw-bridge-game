@@ -46,7 +46,8 @@ function sub(f0, f1, dur, gain, delay = 0){ if (!on()) return; const c = G.ctx, 
 
 // ---- events
 export function hit(a, b, v, pan){ const m = [a, b], has = k => m.includes(k), k = clamp(v / 9, .05, 1);
-  if (has('metal')) play(v > 6 ? 'metalH' : v > 3 ? 'metalM' : 'metalL', .25 + k * .6, 1, pan);
+  if (has('glass')) play('glass', .15 + k * .5, 1.2, pan, 0, .3);
+  else if (has('metal')) play(v > 6 ? 'metalH' : v > 3 ? 'metalM' : 'metalL', .25 + k * .6, 1, pan);
   else if (has('rock')) play(v > 4 ? 'rock' : 'pebble', .15 + k * .5, v > 4 ? 1 : 1.25, pan, 0, .25);
   else if (has('ink')) play('ink', .2 + k * .55, 1.1, pan);
   else if (has('tire')){ if (v > 2.2) play('thud', .15 + k * .5, .8, pan, 0, .2); }
@@ -54,7 +55,12 @@ export function hit(a, b, v, pan){ const m = [a, b], has = k => m.includes(k), k
 export function boom(pan){ if (!on()) return; play('boom', 1, .85, pan, 0, .9); play('boomLow', 1, 1, pan * .5, 0, .6); sub(70, 28, 1.6, .9); noiseHit(2.2, .5, 'lowpass', 3200, .7, 140, pan);
   for (let i = 0; i < 7; i++) play(i % 2 ? 'pebble' : 'metalL', .25, .9 + Math.random() * .4, pan + (Math.random() - .5) * .6, .35 + Math.random() * 1.2, .3); }
 export function crumble(k, pan){ play('rock', .5 + k * .5, .8, pan, 0, .5); sub(90, 40, .4, .35 * k + .1); noiseHit(.6, .25 * k + .05, 'lowpass', 900, .7, 200, pan); for (let i = 0; i < 4; i++) play('pebble', .2, 1.2, pan, .1 + Math.random() * .6, .2); }
-export function snap(pan){ play('ink', .8, 1.6, pan); noiseHit(.05, .4, 'highpass', 2500, .7, null, pan); }
+export function snap(pan, mat){
+  if (mat === 'steel'){ play('metalH', .9, 1.25, pan); play('plate', .5, .7, pan, .02); return; }
+  if (mat === 'rope'){ play('thud', .5, 1.4, pan); noiseHit(.08, .35, 'bandpass', 1800, 2, null, pan); return; }
+  if (mat === 'rubber'){ play('thud', .6, 1.1, pan); return; }
+  play('ink', .9, mat === 'wood' ? .75 : 1.6, pan); noiseHit(.05, .45, 'highpass', 2500, .7, null, pan); if (mat === 'wood') noiseHit(.25, .2, 'bandpass', 1200, 1.5, 400, pan, .02); }
+export function shatter(pan, mat){ play('glass', 1, mat === 'ice' ? .8 : 1.05, pan, 0, .6); play('glass', .6, 1.3, pan, .06, .5); noiseHit(.3, .25, 'highpass', 5000, .7, null, pan); }
 export function partoff(pan){ play('metalH', .8, .8, pan); play('glass', .45, 1, pan, .03); }
 export function dent(k, pan){ play('metalH', .4 + k * .6, .85, pan); }
 export function spark(pan){ play('metalL', .25, 1.7, pan, 0, .2); }

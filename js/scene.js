@@ -1,11 +1,11 @@
 // The 3D diorama: towers, car, ink, hazards, clouds, flag, confetti — plus the camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261024200358';
-import { mergeGeometries } from './vendor-bgu.js?v=20261024200358';
-import { Sky } from './sky.js?v=20261024200358';
-import { paintWall, paintGround } from './textures.js?v=20261024200358';
-import { buildWorld, fbm2 } from './world.js?v=20261024200358';
-import { terrain, floorY } from './physics.js?v=20261024200358';
+import { RoundedBoxGeometry } from './vendor-rbox.js';
+import { mergeGeometries } from './vendor-bgu.js';
+import { Sky } from './sky.js';
+import { paintWall, paintGround } from './textures.js';
+import { buildWorld, fbm2 } from './world.js';
+import { terrain, floorY, segmentize, MATERIALS, INK_DEPTH } from './physics.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp01 = x => Math.min(1, Math.max(0, x)), lerp = (a, b, t) => a + (b - a) * t;
@@ -44,8 +44,7 @@ export class Diorama {
     scene.fog = new THREE.Fog('#8fa8ff', 60, 330); this.ambient = []; this.hemi = new THREE.HemisphereLight('#eef2ff', '#6a5a7a', 1.3); scene.add(this.hemi); this.pm = new THREE.PMREMGenerator(r);
     const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
     this.levelG = new THREE.Group(); scene.add(this.levelG);
-    this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
-    this.cyl = new THREE.CylinderGeometry(.09, .09, 1, 10); this.cap = new THREE.SphereGeometry(.09, 10, 8);
+    this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.strokeGs = []; this.pieces = []; this.buildInkMats();
     this.sky = new Sky(scene); this.buildPen(); this.buildConfetti();
     this.plane = new THREE.Plane(V(0, 0, 1), 0); this.ray = new THREE.Raycaster();
     this.buildFx(); this.buildDebris();
@@ -78,15 +77,31 @@ export class Diorama {
     this.sky.setTheme(T);
     const eq = new THREE.CanvasTexture(cv); eq.colorSpace = THREE.SRGBColorSpace; eq.mapping = THREE.EquirectangularReflectionMapping; if (this.env) this.env.dispose(); this.env = this.pm.fromEquirectangular(eq).texture; eq.dispose(); this.scene.environment = this.env;
      this.hemi.color.set(T.hemi[0]); this.hemi.groundColor.set(T.hemi[1]); this.hemi.intensity = T.hemi[2]; this.sun.color.set(T.sun[0]); this.sun.intensity = T.sun[1]; r.toneMappingExposure = T.exposure ?? 1.05; this.scene.fog.color.copy(this.sky.fogColor());
-    this.inkM.color.set(T.ink); this.inkM.emissive.set(T.inkGlow ? T.ink : '#000000'); this.inkM.emissiveIntensity = T.inkGlow ? 3 : 0;
+    this.inkM.color.set(T.ink); this.inkM.emissive.set(T.inkGlow ? T.ink : '#000000'); this.inkM.emissiveIntensity = T.inkGlow ? 3 : 0; this.inkMats.marker = this.inkM;
     this.buildCar(T.car); if (this.level) this.setLevel(this.level); }
   wallMat(rx, ry){ const W = this.theme.wall, p = paintWall(this.theme), tex = c => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); t.anisotropy = 8; return t; };
     return mat(W.tint || '#ffffff', { map: tex(p.map), bumpMap: tex(p.bump || p.map), bumpScale: W.bump ?? (p.bump ? 3 : 1.2), roughness: W.rough ?? .8, metalness: W.metal ?? 0, ...(p.emissive ? { emissiveMap: tex(p.emissive), emissive: '#ffffff', emissiveIntensity: 3 } : {}) }); }
   buildPen(){ const p = this.pen = new THREE.Group(), k = kit(); k.box(.22, 1.5, .22, '#1c1c22', 0, .95, 0, { r: .1 }).box(.24, .36, .24, '#ffcf1f', 0, 1.5, 0, { r: .1 }).box(.12, .25, .12, '#111', 0, .12, 0, { r: .04 }); k.into(p); p.rotation.z = -.35; p.rotation.x = .25; p.visible = false; this.scene.add(p); }
   buildConfetti(){ this.CONF = Array.from({ length: 120 }, (_, i) => ({ vx: Math.cos(i * 2.4) * (1 + i % 5 * .5), vz: Math.sin(i * 2.4) * (1 + i % 4 * .4), vy: 7 + (i % 7) * .9, rot: i, col: ['#ffcf1f', '#ff5a5a', '#46d38a', '#5aa0ff', '#ff7ae0', '#ffffff'][i % 6] }));
     const c = this.conf = new THREE.InstancedMesh(new THREE.BoxGeometry(.16, .02, .1), mat('#fff'), this.CONF.length); this.CONF.forEach((q, i) => c.setColorAt(i, new THREE.Color(q.col))); c.count = 0; this.scene.add(c); this.o3 = new THREE.Object3D(); }
-  buildDebris(){ this.rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), mat('#888', { roughness: .9, flatShading: true }), 200); this.rocks.castShadow = true; this.rocks.count = 0;
-    this.panels = new THREE.InstancedMesh(new THREE.BoxGeometry(2, 2, 1), mat('#888', { roughness: .5, metalness: .3 }), 40); this.panels.castShadow = true; this.panels.count = 0; this.scene.add(this.rocks, this.panels); }
+  buildDebris(){ const ib = (geo, m, n) => { const o = new THREE.InstancedMesh(geo, m, n); o.castShadow = true; o.count = 0; o.frustumCulled = false; this.scene.add(o); return o; }, B = new THREE.BoxGeometry(2, 2, 2);
+    this.rocks = ib(new THREE.DodecahedronGeometry(1, 0), mat('#888', { roughness: .9, flatShading: true }), 220); this.panels = ib(B, mat('#888', { roughness: .5, metalness: .3 }), 40);
+    this.shards = ib(B, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: .05, metalness: .1, transparent: true, opacity: .55, envMapIntensity: 2 }), 300); this.shards.castShadow = false;
+    this.splinters = ib(B, mat('#ffffff', { roughness: .8 }), 300); }
+  // ---- what each drawing material looks like
+  buildInkMats(){ const wood = document.createElement('canvas'); wood.width = 256; wood.height = 64; const g = wood.getContext('2d'); g.fillStyle = '#a8743f'; g.fillRect(0, 0, 256, 64);
+    for (let i = 0; i < 26; i++){ g.strokeStyle = `rgba(${70 + i % 3 * 20},40,15,${.15 + (i % 4) * .06})`; g.lineWidth = 1 + i % 3; g.beginPath(); const y = (i * 37) % 64; g.moveTo(0, y); g.bezierCurveTo(80, y + 6, 170, y - 6, 256, y + 2); g.stroke(); }
+    const wt = new THREE.CanvasTexture(wood); wt.colorSpace = THREE.SRGBColorSpace; wt.wrapS = wt.wrapT = THREE.RepeatWrapping;
+    this.inkMats = { marker: this.inkM, wood: mat('#ffffff', { map: wt, bumpMap: wt, bumpScale: 1.5, roughness: .75 }), steel: mat('#a9b2bc', { metalness: 1, roughness: .28, envMapIntensity: 1.4 }),
+      rubber: mat('#c23a2c', { roughness: .92 }), glass: new THREE.MeshPhysicalMaterial({ color: '#cdeeff', roughness: .04, metalness: 0, transparent: true, opacity: .42, envMapIntensity: 2.2, clearcoat: 1, depthWrite: false }),
+      ice: new THREE.MeshPhysicalMaterial({ color: '#dff6ff', roughness: .18, transparent: true, opacity: .78, envMapIntensity: 1.6, clearcoat: .6 }), rope: mat('#b8935a', { roughness: .95 }), slat: mat('#8a5a32', { roughness: .85 }), bolt: mat('#5a6068', { metalness: .9, roughness: .35 }) };
+  }
+  // one piece of drawn material, centred on its segment
+  makePiece(x0, y0, x1, y1, m){ const L = Math.max(.06, Math.hypot(x1 - x0, y1 - y0)), a = Math.atan2(y1 - y0, x1 - x0), M = MATERIALS[m] || MATERIALS.marker, th = M.thick || .14, D = INK_DEPTH, g = new THREE.Group(), add = (geo, mm, x = 0, y = 0, z = 0, rx = 0, rz = 0) => { const o = new THREE.Mesh(geo, mm); o.position.set(x, y, z); o.rotation.set(rx, 0, rz); o.castShadow = m !== 'glass'; o.receiveShadow = true; g.add(o); return o; };
+    if (m === 'rope'){ for (const z of [-.65, .65]) add(new THREE.CylinderGeometry(.045, .045, L + .04, 7), this.inkMats.rope, 0, 0, z, 0, Math.PI / 2); add(rbox(L * .6, .05, 1.42, .015), this.inkMats.slat, 0, -.02, 0); }
+    else { add(rbox(L + .02, th, D, Math.min(.04, th * .3)), this.inkMats[m] || this.inkM);
+      if (m === 'steel') for (const z of [-.6, .6]) add(new THREE.CylinderGeometry(.035, .035, .03, 8), this.inkMats.bolt, 0, th / 2 + .01, z); }
+    g.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0); g.rotation.z = a; g.userData.home = [g.position.x, g.position.y, a]; return g; }
   // ---- particles: soft camera-facing billboards. Smoke/dust/snow blend normally and fade; fire/sparks glow additively.
   buildFx(){
     const VS = `attribute float aAlpha; attribute float aRot; varying vec2 vUv; varying float vA; varying vec3 vC;
@@ -130,7 +145,8 @@ export class Diorama {
     if (k === 'crumble'){ this.dust(a, b, 9, .8 + c); }
     if (k === 'spark') this.sparks(a, b, 8);
     if (k === 'dent'){ this.sparks(b, c, 5, 5); this.smoke(b, c, 2, .3); }
-    if (k === 'snap'){ this.dust(a, b, 3, .5); this.sparks(a, b, 4, 3); }
+    if (k === 'snap'){ this.dust(a, b, 3, .5); if (c === 'steel') this.sparks(a, b, 8, 4); }
+    if (k === 'shatter'){ this.emit(14, r => ({ k: 0, spark: true, x: a, y: b, z: (r() - .5) * 1.4, vx: (r() - .5) * 5, vy: r() * 4, vz: (r() - .5) * 3, g: 10, life: .4 + r() * .4, s: .05, glint: true })); }
     if (k === 'partoff'){ this.smoke(a, b, 5, .25); this.sparks(a, b, 10, 6); }
     if (k === 'shot') this.smoke(a, b + .9, 2, .6, .7, .25);
     if (k === 'hit' && (a === 'rock' || b === 'rock' || a === 'stone' && b === 'metal' || a === 'metal' && b === 'stone') && c > 3.5) this.dust(d, f, 1, .6); } }
@@ -161,7 +177,7 @@ export class Diorama {
     if (this.flashT != null && this.flashT < .9){ const k = Math.exp(-this.flashT * 5); halo(this.flash.position.x, this.flash.position.y, 1, 9 + this.flashT * 8, k, k * .7, k * .4); }
     for (const p of P){ const u = p.age / p.life;
       if (p.k === 0){ if (nf >= 1200) continue;
-        if (p.spark){ const sp = Math.hypot(p.vx, p.vy); put(FB, nf, p.x, p.y, p.z, p.s * 1.6, p.s * 1.6 + sp * .035); fR[nf] = Math.atan2(p.vy, p.vx) - Math.PI / 2; fA[nf] = 1 - u; col.setRGB(5, 2.6, 1); }
+        if (p.spark){ const sp = Math.hypot(p.vx, p.vy); put(FB, nf, p.x, p.y, p.z, p.s * 1.6, p.s * 1.6 + sp * .035); fR[nf] = Math.atan2(p.vy, p.vx) - Math.PI / 2; fA[nf] = 1 - u; if (p.glint) col.setRGB(2.6, 3.2, 3.8); else col.setRGB(5, 2.6, 1); }
         else if (p.fly){ const tw = .5 + .5 * Math.sin(p.age * 5 + p.rot * 3); put(FB, nf, p.x, p.y, p.z, p.s, p.s); fR[nf] = 0; fA[nf] = tw * Math.min(1, (1 - u) * 3); col.setRGB(1.6, 2.2, .6); if (tw > .6) halo(p.x, p.y, p.z, .6, .1 * tw, .14 * tw, .03); }
         else { const sc = p.s * (u < .2 ? .6 + u * 2 : 1 - (u - .2) * .7); put(FB, nf, p.x, p.y, p.z, sc, sc * 1.25); fR[nf] = p.rot * .3; fA[nf] = Math.min(1, (1 - u) * 1.6);
           if (u < .25) col.setRGB(3.2, 2.5, 1.3); else if (u < .6) col.setRGB(2.6, 1.1, .3); else col.setRGB(1.1 * (1 - u) + .15, .3 * (1 - u), .08); if (u < .5) halo(p.x, p.y, p.z, sc * 2.4, .12 * (1 - u), .06 * (1 - u), .015); }
@@ -222,14 +238,14 @@ export class Diorama {
       const wind = new THREE.InstancedMesh(new THREE.BoxGeometry(.05, .9, .05), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: .55 }), 40); G.add(wind); return { h, s, blades, wind }; }
     return { h }; }
   // ---------------- ink
-  clearInk(){ while (this.inkG.children.length) this.inkG.remove(this.inkG.children[0]); this.strokeGs = []; }
-  beginStroke(x, y){ const g = new THREE.Group(); this.inkG.add(g); this.strokeGs.push(g); const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x, y, 0); c.scale.setScalar(1.2); g.add(c); return g; }
-  addInkSegment(x0, y0, x1, y1){ const g = this.strokeGs[this.strokeGs.length - 1], L = Math.hypot(x1 - x0, y1 - y0), m = new THREE.Mesh(this.cyl, this.inkM); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0); m.rotation.z = Math.atan2(y1 - y0, x1 - x0) - Math.PI / 2; m.scale.set(1, Math.max(.001, L), 1); m.castShadow = true;
-    const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x1, y1, 0); g.add(m, c); }
-  setInk(strokes, upto = Infinity){ this.clearInk(); let acc = 0, tip = null;
-    for (const s of strokes){ if (acc >= upto) break; this.beginStroke(s[0][0], s[0][1]); tip = s[0];
-      for (let i = 1; i < s.length; i++){ const [x0, y0] = s[i - 1], [x1, y1] = s[i], L = Math.hypot(x1 - x0, y1 - y0); if (acc + L <= upto){ this.addInkSegment(x0, y0, x1, y1); acc += L; tip = s[i]; } else { const k = (upto - acc) / L; const x = lerp(x0, x1, k), y = lerp(y0, y1, k); this.addInkSegment(x0, y0, x, y); acc = upto; tip = [x, y]; break; } } }
-    return tip; }
+  clearInk(){ while (this.inkG.children.length) this.inkG.remove(this.inkG.children[0]); this.strokeGs = []; this.pieces = []; }
+  // (re)build the pieces of stroke i; pieces are kept in the same order as the physics bodies
+  setStroke(i, stroke, m){ const old = this.strokeGs[i]; if (old) this.inkG.remove(old); const g = new THREE.Group(); for (const [x0, y0, x1, y1] of segmentize(stroke, m)) g.add(this.makePiece(x0, y0, x1, y1, m)); this.strokeGs[i] = g; this.inkG.add(g); this.pieces = this.strokeGs.flatMap(s => s ? s.children : []); }
+  setInk(strokes, mats = [], upto = Infinity){ this.clearInk(); let acc = 0, tip = null;
+    strokes.forEach((s, i) => { if (acc >= upto) return; const m = mats[i] || 'marker', segs = segmentize(s, m), g = new THREE.Group(); tip = s[0];
+      for (const [x0, y0, x1, y1] of segs){ if (acc >= upto) break; const L = Math.hypot(x1 - x0, y1 - y0); if (acc + L <= upto){ g.add(this.makePiece(x0, y0, x1, y1, m)); tip = [x1, y1]; } else { const k = (upto - acc) / L, x = x0 + (x1 - x0) * k, y = y0 + (y1 - y0) * k; g.add(this.makePiece(x0, y0, x, y, m)); tip = [x, y]; } acc += L; }
+      this.strokeGs[i] = g; this.inkG.add(g); });
+    this.pieces = this.strokeGs.flatMap(s => s ? s.children : []); return tip; }
   // pointer -> world point on the drawing plane
   toWorld(px, py){ const r = this.canvas.getBoundingClientRect(), v = new THREE.Vector2((px - r.left) / r.width * 2 - 1, -((py - r.top) / r.height) * 2 + 1); this.ray.setFromCamera(v, this.camera); const p = new THREE.Vector3(); return this.ray.ray.intersectPlane(this.plane, p) ? [p.x, p.y] : null; }
   // ---------------- camera
@@ -249,17 +265,21 @@ export class Diorama {
   // ---------------- draw one frame from a physics state (or the idle start state)
   render(t, st, opts = {}){
     const L = this.level, dt = this.fxT == null ? 0 : Math.min(.1, Math.max(0, t - this.fxT)); this.fxT = t;
-    if (st){ st.ink.forEach((p, i) => { const g = this.strokeGs[i]; if (g){ g.position.set(p[0], p[1], 0); g.rotation.z = p[2]; } });
+    if (st){ st.ink.forEach((p, i) => { const g = this.pieces[i]; if (!g) return; g.visible = !!p; if (p){ g.position.set(p[0], p[1], 0); g.rotation.z = p[2]; } });
       this.car.g.position.set(st.car[0], st.car[1] - .02, 0); this.car.g.rotation.z = st.car[2]; this.car.cab.position.set(st.cabin[0], st.cabin[1] - .02, 0); this.car.cab.rotation.z = st.cabin[2];
       this.car.wheels.forEach((w, i) => { w.position.set(st.wheels[i][0], st.wheels[i][1], 0); w.rotation.z = st.wheels[i][2]; });
-      st.blocks.forEach((b, i) => { const g = this.blockMeshes[i]; if (b && g){ g.position.set(b[0], b[1], 0); g.rotation.z = b[2]; } }); }
-    else { this.strokeGs.forEach(g => { g.position.set(0, 0, 0); g.rotation.z = 0; }); for (const o of [this.car.g, this.car.cab]){ o.position.set(L.car[0], L.car[1] - .02, 0); o.rotation.z = 0; } this.car.wheels.forEach((w, i) => { w.position.set(L.car[0] + (i ? .55 : -.55), L.car[1] - .37, 0); w.rotation.z = 0; });
-      terrain(L).flatMap(t => t.blocks).forEach((b, i) => { const g = this.blockMeshes[i]; if (g){ g.position.set(b.x, b.y, 0); g.rotation.z = 0; } }); }
+      st.blocks.forEach((b, i) => { const g = this.blockMeshes[i]; if (b && g){ g.position.set(b[0], b[1], b[2]); g.quaternion.set(b[3], b[4], b[5], b[6]); } }); }
+    else { this.pieces.forEach(g => { const h = g.userData.home; g.visible = true; g.position.set(h[0], h[1], 0); g.rotation.z = h[2]; }); for (const o of [this.car.g, this.car.cab]){ o.position.set(L.car[0], L.car[1] - .02, 0); o.rotation.z = 0; } this.car.wheels.forEach((w, i) => { w.position.set(L.car[0] + (i ? .55 : -.55), L.car[1] - .37, 0); w.rotation.z = 0; });
+      terrain(L).flatMap(t => t.blocks).forEach((b, i) => { const g = this.blockMeshes[i]; if (g){ g.position.set(b.x, b.y, 0); g.quaternion.identity(); } }); }
     this.car.body.position.y = this.car.cabBody.position.y = st ? 0 : Math.sin(t * 30) * .01;
-    const o3 = this.o3; let nr = 0, np = 0;
-    if (st) for (const d of st.debris){ o3.position.set(d[0], d[1], 0); o3.rotation.set(0, 0, d[2]);
-      if (d[3] === 1){ o3.scale.set(d[4], d[4], d[4] * 1.4); o3.updateMatrix(); this.rocks.setMatrixAt(nr++, o3.matrix); } else { o3.scale.set(d[4], d[5], .3); o3.updateMatrix(); this.panels.setMatrixAt(np++, o3.matrix); } }
-    this.rocks.count = nr; this.panels.count = np; this.rocks.instanceMatrix.needsUpdate = this.panels.instanceMatrix.needsUpdate = true;
+    const o3 = this.o3, ccol = this.col; let nr = 0, np = 0, nsh = 0, nsp = 0;
+    if (st) for (const d of st.debris){ const [x, y, z, qx, qy, qz, qw, k, sz, m] = d; o3.position.set(x, y, z); o3.quaternion.set(qx, qy, qz, qw);
+      if (k === 1){ o3.scale.set(sz, sz * .8, sz * 1.1); o3.updateMatrix(); this.rocks.setMatrixAt(nr++, o3.matrix); }
+      else if (k === 0){ o3.scale.set(sz, sz * .35, sz * .8); o3.updateMatrix(); this.panels.setMatrixAt(np++, o3.matrix); }
+      else if (k === 2){ o3.scale.set(sz, sz * .22, sz * .9); o3.updateMatrix(); this.shards.setMatrixAt(nsh, o3.matrix); this.shards.setColorAt(nsh++, ccol.set(m === 'ice' ? '#e8f8ff' : '#bfe6ff')); }
+      else { o3.scale.set(sz * .45, sz * .3, sz * 2.2); o3.updateMatrix(); this.splinters.setMatrixAt(nsp, o3.matrix); this.splinters.setColorAt(nsp++, ccol.set(m === 'wood' ? '#a8743f' : m === 'rubber' ? '#c23a2c' : m === 'steel' ? '#a9b2bc' : m === 'rope' ? '#b8935a' : this.theme.ink)); } }
+    this.rocks.count = nr; this.panels.count = np; this.shards.count = nsh; this.splinters.count = nsp;
+    for (const m of [this.rocks, this.panels, this.shards, this.splinters]){ m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
     this.rocks.material.color.set(this.theme.wall.colors[0]); this.panels.material.color.set(this.car.charred ? '#2a2522' : this.theme.car.body);
     if (opts.events) this.fx(opts.events); this.stepFx(dt, st);
     for (let i = 0; i < this.cloth.geometry.attributes.position.count; i++){ const x = this.clothBase[i * 3] + .65; this.cloth.geometry.attributes.position.setZ(i, Math.sin(x * 4 - t * 6) * .12 * x); } this.cloth.geometry.attributes.position.needsUpdate = true;
