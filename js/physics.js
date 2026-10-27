@@ -15,6 +15,8 @@ const MAX_DEBRIS = 220;
 // ---- the car, piece by piece (car-local metres: x forward, y up, ground at 0). Every piece is its own rigid body,
 // welded to its neighbours; welds snap, pieces split, glass shatters. w/h = full size, a = tilt (radians).
 // type: frame | engine | panel (two side skins) | top (full-width sheet) | bumper | pillar | glass | side (side windows) | tank | light
+// props: the breakable building and the junk in it
+export const PROPS = ['drywall', 'box', 'cabinet', 'barrel', 'slab'];
 export const TYPES = ['frame', 'engine', 'panel', 'top', 'bumper', 'pillar', 'glass', 'side', 'tank', 'light'];
 const slant = (n, t, x0, y0, x1, y1, h, to) => ({ n, t, c: [(x0 + x1) / 2, (y0 + y1) / 2], w: Math.hypot(x1 - x0, y1 - y0), h, a: Math.atan2(y1 - y0, x1 - x0), to });
 export const CAR = [
@@ -44,7 +46,7 @@ export const CAR = [
   { n: 'lightR', t: 'light', c: [-1.87, .84], w: .06, h: .11, to: ['quarter'] },
 ];
 const DENS = { frame: 5, engine: 9, panel: 1.6, top: 1.6, bumper: 3, pillar: 3, glass: 1.2, side: 1.2, tank: 2, light: 1 };
-const WELD = { frame: 4000, engine: 2600, panel: 1300, top: 1100, bumper: 1600, pillar: 1400, glass: 520, side: 520, tank: 1200, light: 300 };  // newtons to snap
+const WELD = { frame: 3400, engine: 2400, panel: 1000, top: 850, bumper: 1200, pillar: 1100, glass: 420, side: 420, tank: 1000, light: 240 };  // newtons to snap
 const TOUGH = { frame: 3, engine: 2, panel: 7, top: 8, bumper: 4, pillar: 5, glass: 30, side: 30, tank: 5, light: 40 };                     // damage per unit impulse
 const WHEELS = [{ x: -1.15, on: 'fr0' }, { x: 1.15, on: 'fr3' }], WHEEL_R = .36;
 
@@ -102,7 +104,20 @@ export function createSim(L){
     if (o.type === 'glass' || o.type === 'side' || o.type === 'light') return shred(o, 'smash');
     if (o.type === 'tank'){ if (fuse < 0){ fuse = t + .5; ev.push(['leak', px, py]); } return; }
     if (o.type === 'engine'){ if (!engineDead){ engineDead = true; ev.push(['engine', px, py]); } return; }
-    o.hp = 60; unweld(o); if (J > 30 && o.w > MIN_SPLIT) split(o, px, py, 'crash'); }
+    o.hp = 60; unweld(o); if (J > 22 && o.w > MIN_SPLIT) split(o, px, py, 'crash'); }
+
+  // ---- props: drywall blocks stay put until something hits them; slabs hang until the ceiling gives way
+  const props = [];
+  function prop(kind, x, y, w, h, type = 'dynamic'){ const b = world.createBody({ type, position: Vec2(x, y) }), D = { drywall: 1, box: .2, cabinet: .9, barrel: 1, slab: 4 }[kind];
+    b.createFixture(Box(w / 2, h / 2), { density: D, friction: kind === 'box' || kind === 'cabinet' || kind === 'barrel' ? .35 : .7, restitution: kind === 'barrel' ? .2 : .05 }); const o = { id: props.length, kind, b, w, h, fuse: -1, gone: false }; b.setUserData({ kind: 'prop', prop: o }); props.push(o); return o; }
+  function loosen(o, vx = 0, vy = 0){ if (o.b.isDynamic()) return; o.b.setType('dynamic'); o.b.resetMassData(); o.b.setAwake(true); o.b.setLinearVelocity(Vec2(vx, vy)); o.b.setAngularVelocity((rnd() - .5) * 4); }
+  // a hit drywall block breaks loose and takes its neighbours with it
+  function smashWall(o, vx, vy){ const p = o.b.getPosition(); let n = 0; for (const q of props) if (q.kind === 'drywall' && !q.b.isDynamic()){ const d = Math.hypot(q.b.getPosition().x - p.x, q.b.getPosition().y - p.y); if (d < .62){ const k = 1 - d / .9; loosen(q, vx * k + (rnd() - .5), vy * k + rnd() * 1.5); n++; } }
+    if (n){ ev.push(['drywall', p.x, p.y, n]); for (let i = 0; i < n * 2; i++) spawn(1, p.x + (rnd() - .5) * .3, p.y + (rnd() - .5) * .6, vx * .5 + (rnd() - .5) * 3, vy * .5 + rnd() * 2); } }
+  // junk bursts when hit hard: cardboard boxes into scraps, filing cabinets into bent sheets of metal
+  function burst(o){ if (o.gone) return; const p = o.b.getPosition(), v = o.b.getLinearVelocity(); world.destroyBody(o.b); o.gone = true; const box = o.kind === 'box';
+    for (let i = 0; i < (box ? 6 : 4); i++) spawn(box ? 6 : 2, p.x + (rnd() - .5) * o.w, p.y + (rnd() - .5) * o.h, v.x * .6 + (rnd() - .5) * 3, v.y * .5 + 1 + rnd() * 3); ev.push([box ? 'cardboard' : 'shred', p.x, p.y]); }
+  function breakSlab(o){ if (o.gone) return; const p = o.b.getPosition(), v = o.b.getLinearVelocity(); world.destroyBody(o.b); o.gone = true; ev.push(['crumble', p.x, p.y, 1]); for (let i = 0; i < 7; i++) spawn(1, p.x + (rnd() - .5) * o.w, p.y + (rnd() - .5) * .2, v.x + (rnd() - .5) * 4, Math.abs(v.y) * .2 + rnd() * 3); for (let i = 0; i < 2; i++) spawn(0, p.x + (rnd() - .5) * o.w, p.y, (rnd() - .5) * 2, rnd() * 2); }
 
   // ---- traps
   const hz = L.hazards.map(h => {
@@ -110,26 +125,36 @@ export function createSim(L){
     if (h.type === 'saw'){ const b = world.createBody({ type: 'kinematic', position: Vec2(h.path[0][0], h.path[0][1]) }); b.setUserData({ kind: 'metal', hz: 'saw' }); b.setAngularVelocity(-h.spin);
       b.createFixture(Circle(h.r * .82), { friction: .2, restitution: .4 }); for (let k = 0; k < 10; k++){ const a = k / 10 * Math.PI * 2, a2 = a + .3; b.createFixture(Polygon([Vec2(Math.cos(a) * h.r * .8, Math.sin(a) * h.r * .8), Vec2(Math.cos(a + .18) * h.r * 1.12, Math.sin(a + .18) * h.r * 1.12), Vec2(Math.cos(a2) * h.r * .8, Math.sin(a2) * h.r * .8)]), { restitution: .4 }); }
       return { h, b }; }
-    if (h.type === 'mine'){ const b = world.createBody({ position: Vec2(h.x, .04) }); b.setUserData({ kind: 'mine', mine: null }); b.createFixture(Circle(.55), { isSensor: true }); const o = { h, b, armAt: -1, gone: false }; b.getUserData().mine = o; return o; }
+    if (h.type === 'ball'){ const b = world.createBody({ type: 'kinematic', position: Vec2(...ballAt(h, 0)) }); b.setUserData({ kind: 'metal', hz: 'ball' }); b.createFixture(Circle(.55), { friction: .4, restitution: .3 }); return { h, b }; }
+    if (h.type === 'flame') return { h, on: false, burn: new Map() };
+    if (h.type === 'slabs'){ const n = Math.round(h.x1 - h.x0), w = (h.x1 - h.x0) / n, list = [];
+      for (let i = 0; i < n; i++){ const o = prop('slab', h.x0 + (i + .5) * w, L.ceil - .18, w - .02, .34, 'static'); o.dropAt = -1; o.i = i; list.push(o); } return { h, list, fired: -1 }; }
+    if (h.type === 'wall'){ const list = []; for (let c = 0; c < h.cols; c++) for (let r = 0; r < 8; r++){ const o = prop('drywall', h.x + (c + .5) * .26, (r + .5) * L.ceil / 8, .25, L.ceil / 8 - .01, 'static'); list.push(o); } return { h, list }; }
+    if (h.type === 'clutter'){ for (let i = 0; i < h.n; i++){ const cab = rnd() < .35, x = h.x0 + (h.x1 - h.x0) * (i + .5) / h.n + (rnd() - .5) * .2; if (cab) prop('cabinet', x, .66, .5, 1.3); else { const s = .35 + rnd() * .2; prop('box', x, s / 2, s * 1.1, s); if (rnd() < .6) prop('box', x + (rnd() - .5) * .1, s + .2, .4, .38); } } return { h }; }
+    if (h.type === 'barrel'){ prop('barrel', h.x, .43, .56, .86); return { h }; }
+    if (h.type === 'mine'){ const b = world.createBody({ position: Vec2(h.x, .04) }); b.setUserData({ kind: 'mine', mine: null }); b.createFixture(Circle(.35), { isSensor: true }); const o = { h, b, armAt: -1, gone: false }; b.getUserData().mine = o; return o; }
     return { h }; });
+  function ballAt(h, tt){ const a = h.amp * Math.sin(2 * Math.PI * (tt + h.phase) / h.period); return [h.x + Math.sin(a) * h.len, L.ceil - Math.cos(a) * h.len]; }
   function crY(h, tt){ const u = (((tt + h.phase) / h.period) % 1 + 1) % 1, top = L.ceil - .6, bot = .6, ease = k => k * k * (3 - 2 * k);
     if (u < .5) return top; if (u < .58){ const k = (u - .5) / .08; return top - (top - bot) * k * k; } if (u < .72) return bot; return bot + (top - bot) * ease((u - .72) / .28); }
 
-  // ---- debris: ceiling tiles (0), concrete (1), scrap metal (2), glass (3), painted body scraps (4), springs and bolts (5)
+  // ---- debris: ceiling tiles (0), concrete (1), scrap metal (2), glass (3), painted body scraps (4), springs and bolts (5), cardboard (6)
   const debris = [];
   function spawn(kind, x, y, vx, vy){ if (debris.filter(d => !d.gone).length >= MAX_DEBRIS) return; const b = world.createBody({ type: 'dynamic', position: Vec2(x, y), angle: rnd() * 6 });
-    let s, h = 0; if (kind === 0 || kind === 4){ s = kind ? .06 + rnd() * .12 : .18 + rnd() * .14; h = kind ? .015 : .025; b.createFixture(Box(s, h), { density: 1.5, friction: .6, restitution: .25 }); }
+    let s, h = 0; if (kind === 0 || kind === 4 || kind === 6){ s = kind === 6 ? .08 + rnd() * .1 : kind ? .06 + rnd() * .12 : .18 + rnd() * .14; h = kind ? .015 : .025; b.createFixture(Box(s, h), { density: 1.5, friction: .6, restitution: .25 }); }
     else if (kind === 3){ s = .04 + rnd() * .07; b.createFixture(Polygon([Vec2(-s, -s * .4), Vec2(s, -s * .2), Vec2(rnd() * s * .5, s * .6)]), { density: 1.2, friction: .3, restitution: .3 }); }
     else if (kind === 5){ s = .05 + rnd() * .05; b.createFixture(Circle(s), { density: 3, friction: .5, restitution: .5 }); }
     else { s = (kind === 2 ? .04 : .07) + rnd() * .08; const pts = []; for (let i = 0; i < 5; i++){ const a = i / 5 * Math.PI * 2 + rnd() * .4; pts.push(Vec2(Math.cos(a) * s * (.7 + rnd() * .5), Math.sin(a) * s * (.7 + rnd() * .5))); } b.createFixture(Polygon(pts), { density: 2.5, friction: .8, restitution: .15 }); }
-    b.setUserData({ kind: kind === 3 ? 'glass' : kind >= 2 ? 'scrap' : kind === 1 ? 'rock' : 'panel' }); b.setLinearVelocity(Vec2(vx, vy)); b.setAngularVelocity((rnd() - .5) * 24); debris.push({ b, k: kind, s, h }); }
+    b.setUserData({ kind: kind === 3 ? 'glass' : kind === 6 ? 'panel' : kind >= 2 ? 'scrap' : kind === 1 ? 'rock' : 'panel' }); b.setLinearVelocity(Vec2(vx, vy)); b.setAngularVelocity((rnd() - .5) * 24); debris.push({ b, k: kind, s, h }); }
 
   let fuse = -1, boomed = false, engineDead = false;
-  function explode(x, y, big){ const R = big ? 4.5 : 3.6; ev.push(['boom', x, y, big ? 1 : .7]);
+  function explode(x, y, big){ const R = big === 'barrel' ? 3.8 : big ? 4.5 : 3.6; ev.push(['boom', x, y, big === 'barrel' ? .85 : big ? 1 : .7]); if (big === 'barrel') big = false;
     for (const o of pieces.filter(o => !o.gone)){ const p = o.b.getPosition(), d = Math.hypot(p.x - x, p.y - y); if (d > R * .7) continue; o.hp -= 140 * (1 - d / (R * .7));
       if (o.type === 'glass' || o.type === 'side' || o.type === 'light') shred(o, 'boom'); else if (o.type === 'tank'){ if (fuse < 0) fuse = t + .15; } else if (o.type === 'engine'){ if (d < 1.6) engineDead = true; } else if (d < R * .45 && rnd() < .8){ unweld(o, true); if (o.w > MIN_SPLIT && rnd() < .6) split(o, p.x + (rnd() - .5) * o.w * .6, p.y, 'boom'); } }
     for (const wh of wheels) if (wh.j && Math.hypot(wh.b.getPosition().x - x, wh.b.getPosition().y - y) < R * .45) dropWheel(wh, 'boom');
     for (const o of tiles) if (Math.abs(o.b.getPosition().x - x) < 2.2) dropTile(o, 6);
+    for (const o of props){ if (o.gone) continue; const p = o.b.getPosition(), d = Math.hypot(p.x - x, p.y - y); if (o.kind === 'barrel' && d < R * .8 && o.fuse < 0) o.fuse = t + .12 + rnd() * .15;
+      if ((o.kind === 'drywall' || o.kind === 'slab') && d < R * .55) loosen(o); }
     for (let b = world.getBodyList(); b; b = b.getNext()){ if (!b.isDynamic()) continue; const p = b.getPosition(), dx = p.x - x, dy = p.y - y, d = Math.hypot(dx, dy); if (d > R || d < 1e-3) continue;
       const k = (1 - d / R) * (big ? 13 : 9) * b.getMass(); b.applyLinearImpulse(Vec2(dx / d * k, (Math.max(0, dy / d) + .9) * k), p, true); b.applyAngularImpulse((rnd() - .5) * k * .3, true); }
     for (let i = 0; i < 8; i++) spawn(1, x + (rnd() - .5) * 1.2, .1, (rnd() - .5) * 9, 3 + rnd() * 7);
@@ -144,7 +169,7 @@ export function createSim(L){
     touches.push({ A, B, ua, ub, x: p.x, y: p.y, v: Math.abs((vb.x - va.x) * n.x + (vb.y - va.y) * n.y) }); });
   world.on('post-solve', (c, imp) => { const J = (imp.normalImpulses[0] || 0) + (imp.normalImpulses[1] || 0); if (J < HURT_J) return;
     const A = c.getFixtureA().getBody(), B = c.getFixtureB().getBody(), wm = c.getWorldManifold(null), p = wm.points[0]; pushes.push({ ua: A.getUserData() || {}, ub: B.getUserData() || {}, J, x: p.x, y: p.y }); });
-  const MAT = { car: 'metal', tire: 'tire', metal: 'metal', floor: 'stone', rock: 'rock', tile: 'stone', panel: 'plate', glass: 'glass', scrap: 'metal' };
+  const MAT = { car: 'metal', tire: 'tire', metal: 'metal', floor: 'stone', rock: 'rock', tile: 'stone', panel: 'plate', glass: 'glass', scrap: 'metal', prop: 'stone' };
 
   // ---- which pieces are still one car: everything welded to the engine
   let stuckX = 0, stuckT = 0, main = new Set(), power = false, grounded = false, hopT = -1, wreckAt = -1, won = false, wonAt = -1, ended = null, carX = CX, carY = .9, startArea = 0, rpm = 0;
@@ -172,8 +197,16 @@ export function createSim(L){
           for (const w of wheels) if (!w.gone){ const p = w.b.getPosition(); if (Math.abs(p.x - h.x) < h.w / 2 && bottom < p.y + w.r * .5 && p.y < y0){ popTire(w); dropWheel(w, 'crush'); } } }
         if (y1 <= .6 + 1e-4 && y0 > .6 + 1e-4){ ev.push(['slam', h.x, 0, 1]); for (let i = 0; i < 3; i++) spawn(1, h.x + (rnd() < .5 ? -1 : 1) * (h.w / 2 + .1), .15, (rnd() - .5) * 5, 2 + rnd() * 3); } }
       if (h.type === 'saw'){ const w = 2 * Math.PI / h.period, du = .5 * w * Math.sin(w * t), [p0, p1] = h.path; o.b.setLinearVelocity(Vec2((p1[0] - p0[0]) * du, (p1[1] - p0[1]) * du)); }
+      if (h.type === 'ball'){ const [x1, y1] = ballAt(h, t + DT), p = o.b.getPosition(); o.b.setLinearVelocity(Vec2((x1 - p.x) / DT, (y1 - p.y) / DT)); }
+      if (h.type === 'flame'){ const on = ((t + h.phase) % h.period + h.period) % h.period < h.on; if (on !== o.on){ o.on = on; ev.push([on ? 'flameOn' : 'flameOff', h.x]); }
+        if (on){ for (const q of pieces) if (!q.gone){ const p = q.b.getPosition(); if (Math.abs(p.x - h.x) < .6 + q.w / 2 && p.y < 2.6){ const before = q.hp; q.hp -= 70 * DT * (q.type === 'glass' || q.type === 'side' ? 3 : 1); if (q.type === 'tank' && fuse < 0 && q.hp < 40){ fuse = t + .7; ev.push(['leak', p.x, p.y]); } if (before > 0 && q.hp <= 0) breakPiece(q, p.x, p.y, 0); } }
+          for (const w of wheels) if (!w.gone && Math.abs(w.b.getPosition().x - h.x) < .6){ const k = (o.burn.get(w) || 0) + DT; o.burn.set(w, k); if (k > .45) popTire(w); }
+          for (const q of props) if (!q.gone && q.kind === 'barrel' && q.fuse < 0 && Math.abs(q.b.getPosition().x - h.x) < .7) q.fuse = t + .6; } }
+      if (h.type === 'slabs'){ if (o.fired < 0 && carX > h.trigger){ o.fired = t; ev.push(['rumble', (h.x0 + h.x1) / 2]); o.list.forEach(q => q.dropAt = t + .55 + q.i * .1); }
+        for (const q of o.list) if (!q.gone && q.dropAt >= 0 && t >= q.dropAt && !q.b.isDynamic()){ loosen(q, 0, -1); ev.push(['crack', q.b.getPosition().x]); } }
       if (h.type === 'mine' && o.armAt >= 0 && !o.gone && t - o.armAt > .22){ o.gone = true; world.destroyBody(o.b); explode(h.x, .1, false); } }
     for (const o of tiles) if (!o.dropped && o.dropAt >= 0 && t >= o.dropAt) dropTile(o);
+    for (const o of props) if (o.kind === 'barrel' && !o.gone && o.fuse >= 0 && t >= o.fuse){ o.gone = true; const p = o.b.getPosition(); world.destroyBody(o.b); explode(p.x, p.y, 'barrel'); }
     if (fuse >= 0 && !boomed && t >= fuse){ boomed = true; const k = pieces.find(o => o.type === 'tank' && !o.gone) || pieces.find(o => o.type === 'tank'); const p = k.b.getPosition(); if (!k.gone) removePiece(k); explode(p.x, p.y, true); }
     world.step(DT, 8, 3); t += DT;
 
@@ -184,10 +217,16 @@ export function createSim(L){
           if (w.hz === 'saw' && t - o.cool > .1){ o.cool = t; ev.push(['cut', c.x, c.y]); const r = split(o, c.x, c.y, 'saw'); if (r) for (const q of r){ q.cool = t; q.hp -= 25; } }
           else if (w.hz === 'spike' && !o.stuck){ o.stuck = true; o.hp -= 40; world.createJoint(WeldJoint({}, B, o.b, Vec2(c.x, c.y))); ev.push(['impale', c.x, c.y]); if (o.type === 'tank' && fuse < 0) fuse = t + .6; } }
         if (u.kind === 'tire'){ const o = u.wheel; if (w.hz === 'spike') popTire(o); if (w.hz === 'saw' && t - o.cool > .3){ o.cool = t; popTire(o); ev.push(['cut', c.x, c.y]); if (rnd() < .5) dropWheel(o, 'saw'); } }
-        if (u.kind === 'car' || u.kind === 'tire'){ if (w.kind === 'tile' && w.tile.dropAt < 0) w.tile.dropAt = t + .18; } }
+        if (u.kind === 'car' || u.kind === 'tire'){ if (w.kind === 'tile' && w.tile.dropAt < 0) w.tile.dropAt = t + .18; }
+        if (u.kind === 'car' && w.hz === 'ball'){ const o = u.piece; if (!o.gone && t - o.cool > .3){ o.cool = t; o.hp -= 70; ev.push(['smash', c.x, c.y]); unweld(o, true); if (o.w > MIN_SPLIT && rnd() < .5) split(o, c.x, c.y, 'ball'); else if (o.hp <= 0) breakPiece(o, c.x, c.y, 40); } }
+        if (u.kind === 'prop'){ const o = u.prop, Bd = B.isDynamic() || B.getType() === 'kinematic';
+          if (o.kind === 'drywall' && !o.b.isDynamic() && Bd && c.v > 1.2){ const v = B.getLinearVelocity(); smashWall(o, v.x * .7, v.y * .7 + 1); }
+          if (o.kind === 'slab' && o.b.isDynamic() && !o.gone && (w.kind === 'floor' || w.kind === 'tile' || w.kind === 'rock') && c.v > 2.5) breakSlab(o);
+          if (o.kind === 'barrel' && o.fuse < 0 && (c.v > 9.5 || w.hz)) o.fuse = t + .35; } }
       if (c.v > 1.2 && sounds < 6){ const last = Math.max(c.ua.lastHit ?? -1, c.ub.lastHit ?? -1); if (t - last > .09){ c.ua.lastHit = c.ub.lastHit = t; sounds++; ev.push(['hit', MAT[c.ua.kind] || 'stone', MAT[c.ub.kind] || 'stone', c.v, c.x, c.y]); } } }
     touches.length = 0;
     // hard knocks dent, crack and tear pieces off
+    for (const q of pushes) for (const u of [q.ua, q.ub]) if (u.kind === 'prop' && (u.prop.kind === 'box' && q.J > 1.5 || u.prop.kind === 'cabinet' && q.J > 5)) burst(u.prop);
     for (const q of pushes){ for (const [u, w] of [[q.ua, q.ub], [q.ub, q.ua]]){ if (u.kind !== 'car' || w.kind === 'car' || w.hz) continue; const o = u.piece; if (o.gone) continue; const before = o.hp; o.hp -= (q.J - HURT_J) * TOUGH[o.type];
         if (q.J > 9) ev.push(['dent', Math.min(1, q.J / 40), q.x, q.y]); if (before > 0 && o.hp <= 0) breakPiece(o, q.x, q.y, q.J); } }
     pushes.length = 0;
@@ -214,7 +253,8 @@ export function createSim(L){
       engine: [...P(eng.b), engineDead ? 1 : 0, Math.max(0, Math.min(1, eng.hp / 100))],
       scrape: (() => { let v = 0; for (const o of main) for (let ce = o.b.getContactList(); ce; ce = ce.next){ const u = ce.other.getUserData() || {}; if (ce.contact.isTouching() && (u.kind === 'floor' || u.kind === 'tile')){ const w = o.b.getLinearVelocity(); v = Math.max(v, Math.hypot(w.x, w.y)); } } return v; })(),
       wheels: wheels.map(w => [...P(w.b), w.r, w.j ? 1 : 0, w.popped ? 1 : 0]),
-      hazards: hz.map(o => o.h.type === 'mine' ? { armed: o.armAt >= 0, gone: o.gone } : o.b ? { pos: P(o.b) } : {}),
+      hazards: hz.map(o => o.h.type === 'mine' ? { armed: o.armAt >= 0, gone: o.gone } : o.h.type === 'flame' ? { on: o.on } : o.h.type === 'slabs' ? { fired: o.fired >= 0 ? t - o.fired : -1 } : o.b ? { pos: P(o.b) } : {}),
+      props: props.filter(o => !o.gone).map(o => [...P(o.b), PROPS.indexOf(o.kind), o.w, o.h, o.fuse >= 0 ? 1 : 0, o.b.isDynamic() ? 1 : 0, o.id]),
       tiles: tiles.map(o => P(o.b)),
       debris: debris.filter(d => !d.gone).map(d => [...P(d.b), d.k, d.s, d.h]) };
   }

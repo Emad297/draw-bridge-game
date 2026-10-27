@@ -69,6 +69,10 @@ export const creak = pan => { play('plate', .35, .6, pan, 0, .2); play('pebble',
 export const hop = () => { any(['bump', 'thud'], .7, .8, 0, 0, .2); };
 export const engineDie = () => { any(['crunch', 'metalL'], .8, .6, 0); sub(60, 25, .8, .4); };
 export const leak = pan => { any(['debris', 'pebble'], .3, .7, pan); };
+export const drywall = (k, pan) => { play('rock', .4 + k * .5, 1.1, pan, 0, .4); any(['crunch', 'plate'], .3 + k * .3, 1.4, pan, .02); for (let i = 0; i < 3; i++) play('pebble', .25, 1, pan, .05 + Math.random() * .4, .2); };
+export const cardboard = pan => { play('thud', .5, 1.3, pan, 0, .2); play('plate', .25, .5, pan, .02, .1); };
+export const flameOn = pan => { any(['fire', 'boomLow'], .5, 1.6, pan, 0, .2); };
+export const rumble = pan => { sub(45, 30, 1.4, .5); for (let i = 0; i < 6; i++) play('pebble', .3, .8, pan, Math.random() * .8, .4); };
 export function win(){ any(['bump'], .5, 1.2, 0); }
 export const ready = () => loading;
 
@@ -82,7 +86,7 @@ export function drive(d){ if (!G || !on()) return; const t = now(), set = (name,
   set('engine', running ? (d.gas ? .32 : .08) * (.6 + Math.min(1, rev) * .4) : 0, .75 + rev * .7, 0); set('engine', running ? (d.gas ? .05 : .3) : 0, .9 + rev * .5, 1);
   const slip = d && d.grounded && running && d.gas ? clamp((d.rpm * .36 - d.speed) / 4, 0, 1) : 0; set('screech', slip * .45);
   set('scrape', d ? clamp((d.scrape || 0) / 6, 0, 1) * .5 : 0, .8 + (d ? clamp((d.scrape || 0) / 10, 0, .6) : 0));
-  set('fire', d ? d.fire * .35 : 0); }
+  set('fire', d ? Math.max(d.fire * .35, (d.flame || 0) * .5) : 0); }
 
 // ---- offline rendering for the video export: sounds are scheduled into an OfflineAudioContext on a virtual clock
 export function offline(octx){ initAudio(); const saved = G; G = graph(octx); offT = 0;

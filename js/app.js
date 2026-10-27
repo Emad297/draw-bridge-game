@@ -1,8 +1,8 @@
-import { LEVEL } from './level.js?v=20261027011124';
-import { createSim, DT, KEY } from './physics.js?v=20261027011124';
-import { View } from './scene.js?v=20261027011124';
-import * as S from './audio.js?v=20261027011124';
-import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027011124';
+import { LEVEL } from './level.js?v=20261027024250';
+import { createSim, DT, KEY } from './physics.js?v=20261027024250';
+import { View } from './scene.js?v=20261027024250';
+import * as S from './audio.js?v=20261027024250';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027024250';
 
 const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
 const store = { get(k, d){ try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } } };
@@ -44,6 +44,7 @@ function react(e, camX){ const [k, a, b, c] = e, pan = x => Math.max(-1, Math.mi
   if (k === 'snap') S.snap(pan(a));
   if (k === 'partoff') S.partoff(pan(a));
   if (k === 'shred') S.shred(pan(a));
+  if (k === 'cardboard') S.cardboard(pan(a));
   if (k === 'glass') S.glass(pan(a));
   if (k === 'crush'){ S.crush(pan(a)); return .2; }
   if (k === 'dent'){ S.dent(a, pan(b)); return a * .08; }
@@ -54,10 +55,15 @@ function react(e, camX){ const [k, a, b, c] = e, pan = x => Math.max(-1, Math.mi
   if (k === 'hop') S.hop();
   if (k === 'engine') S.engineDie();
   if (k === 'leak') S.leak(pan(a));
+  if (k === 'drywall'){ S.drywall(Math.min(1, c / 6), pan(a)); return .04; }
+  if (k === 'smash'){ S.crush(pan(a)); return .3; }
+  if (k === 'flameOn') S.flameOn(pan(a));
+  if (k === 'rumble'){ S.rumble(pan(a)); return .15; }
+  if (k === 'crack') S.crumble(.6, pan(a));
   if (k === 'win') S.win();
   return 0; }
 // the car's continuous sounds (engine, tyres, fire) from one physics state
-const carSound = (s, inp, dt) => s && { scrape: s.scrape, on: s.power && !s.won, gas: !!(inp & (KEY.left | KEY.right)), rpm: s.rpm, speed: Math.abs(s.speed), grounded: s.grounded, fire: s.engineDead || s.fuse ? 1 : 0, dt };
+const carSound = (s, inp, dt) => s && { flame: LEVEL.hazards.reduce((m, h, i) => h.type === 'flame' && s.hazards[i].on ? Math.max(m, 1 - Math.abs(h.x - s.car[0]) / 10) : m, 0), scrape: s.scrape, on: s.power && !s.won, gas: !!(inp & (KEY.left | KEY.right)), rpm: s.rpm, speed: Math.abs(s.speed), grounded: s.grounded, fire: s.engineDead || s.fuse ? 1 : 0, dt };
 function handle(evs, live){ const camX = st ? st.car[0] : 0; for (const e of evs){ pending.push(e); shake = Math.max(shake, react(e, camX)); if (e[0] === 'end' && live) showResult(e[1]); } }
 const RES = { win: '🚪', boom: '🔥', wrecked: '💥', stuck: '🪤', timeout: '⏳' };
 function showResult(r){ lastResult = r; mode = 'result'; const m = Math.max(0, Math.round(st.car[0] - LEVEL.start)); if (m > best){ best = m; store.set('br-best', best); }

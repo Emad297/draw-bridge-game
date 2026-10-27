@@ -1,8 +1,8 @@
 // The 3D view: a backrooms corridor (yellow wallpaper, damp carpet, humming lights), the modular car (one mesh per
 // physics piece, so every split-off half shows up), the traps, sparks, smoke, fire, oil stains and debris — plus the follow camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027011124';
-import { createSim, TYPES, PIT_Y, pitAt } from './physics.js?v=20261027011124';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027024250';
+import { createSim, TYPES, PROPS, PIT_Y, pitAt } from './physics.js?v=20261027024250';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t, clamp01 = x => Math.min(1, Math.max(0, x));
@@ -29,6 +29,7 @@ const stripes = () => canvasTex(256, 64, (g, w, h) => { g.fillStyle = '#1d1d1d';
 const splatTex = () => canvasTex(256, 256, (g, w, h, r) => { g.fillStyle = '#fff';
   for (let i = 0; i < 9; i++){ const a = r() * 6.28, d = r() * 34, s = 28 + r() * 34; g.beginPath(); g.ellipse(128 + Math.cos(a) * d, 128 + Math.sin(a) * d, s, s * (.6 + r() * .4), r() * 3, 0, 7); g.fill(); }
   for (let i = 0; i < 26; i++){ const a = r() * 6.28, d = 70 + r() * 50, s = 2 + r() * 7; g.beginPath(); g.arc(128 + Math.cos(a) * d, 128 + Math.sin(a) * d, s, 0, 7); g.fill(); } });
+const barrelTex = () => canvasTex(128, 128, (g, w, h) => { g.fillStyle = '#c0281d'; g.fillRect(0, 0, w, h); g.fillStyle = '#8a1c14'; for (const y of [18, 108]) g.fillRect(0, y, w, 6); g.fillStyle = '#f2c21b'; g.fillRect(0, 50, w, 28); g.fillStyle = '#1d1d1d'; g.font = '900 22px sans-serif'; g.textAlign = 'center'; g.fillText('DANGER', w / 2, 72); });
 const exitSign = () => canvasTex(256, 96, (g, w, h) => { g.fillStyle = '#0b1a0d'; g.fillRect(0, 0, w, h); g.fillStyle = '#5dff7a'; g.font = '900 70px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('EXIT', w / 2, h / 2 + 4); });
 
 // a box from (x0,y0,z0) to (x1,y1,z1) whose texture is laid out in world units, so neighbouring boxes line up
@@ -131,6 +132,12 @@ export class View {
         const [a, b] = h.path, vert = Math.abs(b[0] - a[0]) < .01;
         if (vert){ G.add(wbox(a[0] - .06, a[0] + .06, 0, L.ceil, -1.25, -1.15, M.dark)); const arm = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 1.2, 8), M.steel); arm.rotation.x = Math.PI / 2; arm.position.z = -.6; s.add(arm); } else G.add(wbox(Math.min(a[0], b[0]) - h.r, Math.max(a[0], b[0]) + h.r, -.02, .005, -.06, .06, M.dark));
         return { h, s }; }
+      if (h.type === 'ball'){ const g = new THREE.Group(), ball = new THREE.Mesh(new THREE.SphereGeometry(.55, 24, 16), M.dark); ball.castShadow = true; g.add(ball);
+        for (let k = 0; k < 8; k++){ const sp = new THREE.Mesh(new THREE.ConeGeometry(.1, .3, 8), M.steel), a = k / 8 * Math.PI * 2; sp.position.set(Math.cos(a) * .6, Math.sin(a) * .6, 0); sp.rotation.z = a - Math.PI / 2; ball.add(sp); }
+        for (const z of [-.4, .4]){ const sp = new THREE.Mesh(new THREE.ConeGeometry(.1, .3, 8), M.steel); sp.position.z = z * 1.5; sp.rotation.x = z > 0 ? Math.PI / 2 : -Math.PI / 2; ball.add(sp); }
+        const chain = new THREE.Mesh(new THREE.CylinderGeometry(.04, .04, 1, 6), M.steel); g.add(chain); const mount = new THREE.Mesh(new THREE.BoxGeometry(.6, .2, .6), M.dark); mount.position.set(h.x, L.ceil - .1, 0); G.add(mount);
+        this.scene.add(g); return { h, g, ball, chain }; }
+      if (h.type === 'flame'){ const n = wbox(h.x - .35, h.x + .35, -.02, .08, -.9, .9, M.dark); G.add(n); for (const z of [-.5, 0, .5]){ const c = new THREE.Mesh(new THREE.CylinderGeometry(.09, .12, .12, 12), M.steel); c.position.set(h.x, .1, z); G.add(c); } return { h }; }
       if (h.type === 'mine'){ const g = new THREE.Group(), base = new THREE.Mesh(new THREE.CylinderGeometry(.24, .28, .08, 20), M.dark); base.position.y = .04; base.castShadow = true; g.add(base);
         const led = new THREE.Mesh(new THREE.SphereGeometry(.045, 10, 8), new THREE.MeshBasicMaterial({ color: '#ff2a1a', toneMapped: false })); led.position.y = .1; g.add(led); g.position.set(h.x, 0, 0); this.scene.add(g); return { h, g, led }; }
       return { h }; });
@@ -148,7 +155,11 @@ export class View {
     const deb = (geo, m, n) => { const o = new THREE.InstancedMesh(geo, m, n); o.castShadow = true; o.count = 0; o.frustumCulled = false; s.add(o); return o; };
     // debris kinds: 0 ceiling tile, 1 concrete, 2 scrap metal, 3 glass, 4 painted body scrap, 5 springs and bolts
     this.deb = [deb(new THREE.BoxGeometry(2, 2, 1.2), this.M.ceil, 60), deb(new THREE.DodecahedronGeometry(1, 0), this.M.conc, 160), deb(new THREE.DodecahedronGeometry(1, 0), this.CM.frame, 200),
-      deb(new THREE.TetrahedronGeometry(1, 0), this.CM.glass, 220), deb(new THREE.BoxGeometry(2, 2, 1), this.paint, 200), deb(new THREE.TorusGeometry(.7, .3, 6, 10), this.CM.chrome, 100)]; }
+      deb(new THREE.TetrahedronGeometry(1, 0), this.CM.glass, 220), deb(new THREE.BoxGeometry(2, 2, 1), this.paint, 200), deb(new THREE.TorusGeometry(.7, .3, 6, 10), this.CM.chrome, 100), deb(new THREE.BoxGeometry(2, 2, 1), new THREE.MeshStandardMaterial({ color: '#b5884e', roughness: .95 }), 120)];
+    // props, in PROPS order: drywall blocks, cardboard boxes, filing cabinets, explosive barrels, ceiling slabs
+    const card = new THREE.MeshStandardMaterial({ color: '#b5884e', roughness: .95 }), cab = new THREE.MeshStandardMaterial({ color: '#7d8288', roughness: .45, metalness: .5 }), barrel = new THREE.MeshStandardMaterial({ map: barrelTex(), roughness: .5, metalness: .3 }), slab = [this.M.conc, this.M.conc, this.M.conc, this.M.ceil, this.M.conc, this.M.conc];
+    this.prop = [deb(new THREE.BoxGeometry(1, 1, 1), this.M.wall, 64 * 4), deb(new THREE.BoxGeometry(1, 1, 1), card, 40), deb(new THREE.BoxGeometry(1, 1, 1), cab, 20), deb(new THREE.CylinderGeometry(.5, .5, 1, 18), barrel, 10), deb(new THREE.BoxGeometry(1, 1, 1), slab, 12)];
+    this.propZ = [[-.7, 5], [0, .55], [0, .6], [0, 1], [-1.2, 4]]; }
   reset(){ this.rng = RNG(1234); for (const P of [this.drops, this.sparks, this.smoke, this.fire]) P.list = []; this.nSplat = 0; this.splats.count = 0; this.camState = null; this.fxT = null; this.flashK = 0;
     for (const m of this.carMeshes.values()) this.scene.remove(m); this.carMeshes.clear();
     this.hz.forEach(o => { if (o.g) o.g.visible = true; }); }
@@ -161,7 +172,7 @@ export class View {
   shower(x, y, z, vx, vy, n, sp = 6){ const r = this.rng; for (let i = 0; i < n; i++) this.sparks.add({ x, y, z: z + (r() - .5) * .3, vx: vx + (r() - .5) * sp, vy: vy + r() * sp * .8, vz: (r() - .5) * sp * .8, s: .03 + r() * .04, a: 1, col: r() < .3 ? '#fff3b0' : r() < .6 ? '#ffb030' : '#ff7a18', life: .25 + r() * .5, g: 1 }); }
   oil(x, y, z, vx, vy, n){ const r = this.rng; for (let i = 0; i < n; i++) this.drops.add({ x, y, z: z + (r() - .5) * .6, vx: vx + (r() - .5) * 2, vy: vy + (r() - .5) * 2, vz: (r() - .5) * 2, s: .04 + r() * .06, a: 1, col: OIL[i % 3], life: 5 }); }
   puff(x, y, z, n, col = '#d8cfa8', s = .6, up = .6, life = 1.4){ const r = this.rng; for (let i = 0; i < n; i++) this.smoke.add({ x: x + (r() - .5) * .6, y: y + r() * .3, z: z + (r() - .5) * .8, vx: (r() - .5) * 2, vy: r() * up, vz: (r() - .5) * 2, s: s * (.6 + r() * .8), a: .5, a0: .55, col, life: life * (.8 + r() * .6), grow: 1 }); }
-  flame(x, y, z, n, k = 1){ const r = this.rng; for (let i = 0; i < n; i++) this.fire.add({ x: x + (r() - .5) * .5 * k, y: y + r() * .2, z: z + (r() - .5) * 1.2 * k, vx: (r() - .5) * .6, vy: 1 + r() * 1.6, vz: (r() - .5) * .6, s: (.25 + r() * .35) * k, a: .8, a0: .8, col: r() < .4 ? '#ffcf5a' : '#ff6a1a', life: .35 + r() * .45, grow: -.4 }); }
+  flame(x, y, z, n, k = 1, up = 1){ const r = this.rng; for (let i = 0; i < n; i++) this.fire.add({ x: x + (r() - .5) * .5 * k, y: y + r() * .2, z: z + (r() - .5) * 1.2 * k, vx: (r() - .5) * .6, vy: (1 + r() * 1.6) * up, vz: (r() - .5) * .6, s: (.25 + r() * .35) * k, a: .8, a0: .8, col: r() < .4 ? '#ffcf5a' : '#ff6a1a', life: .35 + r() * .45, grow: -.4 }); }
   fx(evs){ const r = this.rng;
     for (const e of evs){ const k = e[0];
       if (k === 'cut'){ this.shower(e[1], e[2], 0, 0, 2, 60, 7); }
@@ -169,12 +180,17 @@ export class View {
       if (k === 'snap' || k === 'partoff'){ this.shower(e[1], e[2] || .6, 0, 0, 1, 10, 3); }
       if (k === 'dent'){ this.shower(e[2], e[3], 0, 0, 1, Math.round(4 + e[1] * 16), 4); }
       if (k === 'glass'){ const [, x, y] = e; for (let i = 0; i < 30; i++) this.sparks.add({ x, y, z: (r() - .5) * 1.6, vx: (r() - .5) * 4, vy: r() * 3, vz: (r() - .5) * 4, s: .025 + r() * .03, a: .9, col: '#dff4ff', life: .3 + r() * .4, g: 1 }); }
+      if (k === 'cardboard'){ this.puff(e[1], e[2], 0, 5, '#c9a777', .4, .5, .8); }
       if (k === 'shred'){ this.shower(e[1], e[2], 0, 0, 1, 20, 5); this.puff(e[1], e[2], 0, 4, '#8a857a', .4, .4, 1); }
       if (k === 'crush'){ this.shower(e[1], e[2], 0, 0, 1, 25, 6); this.oil(e[1], e[2], 0, 0, 1, 12); }
       if (k === 'impale' || k === 'pop'){ this.shower(e[1], e[2] ?? .3, 0, 0, 1, 12, 4); if (k === 'pop') this.puff(e[1], .3, 0, 8, '#cfc6a6', .5, .8, .8); }
       if (k === 'boom'){ const [, x, y, big] = e; this.flashK = 1 + big; this.flash.position.set(x, 1.2, .5); this.flame(x, y + .3, 0, Math.round(70 * big), 1.8 * big); this.puff(x, y, 0, Math.round(45 * big), '#2e2a26', 1.3, 2.5, 3); this.shower(x, y, 0, 0, 3, 120, 11);
         this.splat(x, .003, 0, 0, 1, 0, 1.2, '#100d0b'); for (let i = 0; i < 6; i++) this.splat(x + (r() - .5) * 2, .004, (r() - .5) * 2, 0, 1, 0, .3 + r() * .4, OIL[i % 3]); }
       if (k === 'slam'){ this.puff(e[1], .1, 0, 18, '#cbbf98', .7, .8); }
+      if (k === 'drywall'){ this.puff(e[1], e[2], -.3, 6 + e[3] * 2, '#e8dcae', .7, .5); }
+      if (k === 'smash'){ this.shower(e[1], e[2], 0, 0, 2, 50, 8); }
+      if (k === 'rumble'){ const h = this.L.hazards.find(h => h.type === 'slabs'); for (let x = h.x0; x < h.x1; x += .5) this.puff(x, this.L.ceil - .3, -.6, 2, '#d8d2b4', .5, -.8, 2); }
+      if (k === 'crack'){ this.puff(e[1], this.L.ceil - .3, -.8, 6, '#d8d2b4', .6, -1, 1.6); }
       if (k === 'crumble'){ this.puff(e[1], e[2] - .3, -.5, 14, '#d8d2b4', .8, -.5); } } }
   stepFx(dt, st, t){ const r = this.rng, g = 9.8, L = this.L;
     // a hurt engine smokes, a dead one burns and leaks oil; a leaking tank sprays fuel and flames until it goes up
@@ -222,11 +238,22 @@ export class View {
     this.hz.forEach((o, i) => { const h = o.h, hs = !idle && st.hazards[i];
       if (h.type === 'crusher'){ const y = hs ? hs.pos[1] : L.ceil - .6; o.g.position.set(h.x, y, 0); }
       if (h.type === 'saw'){ const p = hs ? hs.pos : [h.path[0][0], h.path[0][1], 0]; o.s.position.set(p[0], p[1], 0); o.s.rotation.z = p[2]; }
+      if (h.type === 'ball'){ const a = h.amp * Math.sin(2 * Math.PI * ((idle ? 0 : st.t) + h.phase) / h.period), bx = h.x + Math.sin(a) * h.len, by = L.ceil - Math.cos(a) * h.len;
+        o.ball.position.set(bx, by, 0); o.ball.rotation.z = a; o.chain.position.set((h.x + bx) / 2, (L.ceil + by) / 2, 0); o.chain.scale.y = h.len - .5; o.chain.rotation.z = a; }
+      if (h.type === 'flame' && hs && hs.on){ for (const z of [-.5, 0, .5]){ this.flame(h.x, .12, z, 3, .55, 3.2); } if (this.rng() < .3) this.puff(h.x, 2.2, 0, 1, '#2e2a26', .5, .8, 1.4); }
       if (h.type === 'mine'){ o.g.visible = !(hs && hs.gone); o.led.visible = hs && hs.armed ? Math.sin(t * 40) > 0 : Math.sin(t * 4 + i) > .3; } });
     this.tileState = idle ? null : st.tiles; this.tiles.forEach((m, i) => { const p = st.tiles[i]; m.position.set(p[0], p[1], 0); m.rotation.z = p[2]; });
+    // props: the slabs above a collapsing ceiling shake before they come down
+    const np = this.prop.map(() => 0), sh = this.hz.find(o => o.h.type === 'slabs'), shake = !idle && sh && st.hazards[this.hz.indexOf(sh)].fired >= 0;
+    for (const q of st.props || []){ const [x, y, a, k, w, h, lit, dyn, id] = q, [zc, d] = this.propZ[k], z = k === 1 || k === 2 || k === 3 ? ((id * 0.618) % 1 - .5) * 1.2 : zc, j = k === 4 && shake && !dyn ? .03 : 0;
+      if (k === 0){ // a drywall block is drawn as four chunks across the room; loose ones tumble apart
+        for (let c = 0; c < 4; c++){ const zz = WALL_Z + .02 + (c + .5) * 1.25, sp = dyn ? 1 : 0, h1 = ((id * 7 + c * 13) % 10) / 10 - .5; o3.position.set(x + h1 * .3 * sp, y + h1 * .2 * sp, zz + h1 * .4 * sp); o3.rotation.set(h1 * .6 * sp, h1 * .9 * sp, a + h1 * .5 * sp); o3.scale.set(w, h, 1.23); o3.updateMatrix(); this.prop[0].setMatrixAt(np[0]++, o3.matrix); } continue; }
+      o3.position.set(x + (this.rng() - .5) * j, y + (this.rng() - .5) * j, z); o3.rotation.set(0, 0, a); o3.scale.set(w, h, k === 3 ? w : d); o3.updateMatrix(); this.prop[k].setMatrixAt(np[k]++, o3.matrix);
+      if (lit && this.rng() < .5){ this.flame(x, y + h / 2, z, 1, .35); this.shower(x, y + h / 2, z, 0, 1, 1, 2); } }
+    this.prop.forEach((m, k) => { m.count = np[k]; m.instanceMatrix.needsUpdate = true; });
     // debris
     const n = this.deb.map(() => 0); if (!idle) for (const d of st.debris){ const k = d[3]; o3.position.set(d[0], d[1], (d[4] * 977 % 1.6) - .8); o3.rotation.set(d[4] * 31, d[4] * 17, d[2]);
-      if (k === 0 || k === 4) o3.scale.set(d[4], Math.max(d[5], .012), k ? .5 * d[4] : .25); else o3.scale.setScalar(d[4]); o3.updateMatrix(); if (n[k] < this.deb[k].instanceMatrix.count) this.deb[k].setMatrixAt(n[k]++, o3.matrix); }
+      if (k === 0 || k === 4 || k === 6) o3.scale.set(d[4], Math.max(d[5], .012), k ? .5 * d[4] : .25); else o3.scale.setScalar(d[4]); o3.updateMatrix(); if (n[k] < this.deb[k].instanceMatrix.count) this.deb[k].setMatrixAt(n[k]++, o3.matrix); }
     this.deb.forEach((m, k) => { m.count = n[k]; m.instanceMatrix.needsUpdate = true; });
     // lights hum and flicker; explosions flash
     this.lights.forEach(l => { const f = l.k % 7 === 3 ? (Math.sin(t * 23 + l.k) + Math.sin(t * 7.3) > 1.2 ? 0 : 1) : 1; l.m.material = f ? this.M.light : this.M.lightOff; });
