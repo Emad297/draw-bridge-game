@@ -3,43 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#2f45ff">
-<title>Draw Bridge</title>
+<meta name="theme-color" content="#c9b878">
+<title>Level 0</title>
 <script>/* if this page is an old cached copy, reload the newest version */
-fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261027002126' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
-<link rel="stylesheet" href="css/style.css?v=20261027002126">
-<script src="vendor/planck.min.js?v=20261027002126"></script>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261027002126" } }</script>
+fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261027003910' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
+<link rel="stylesheet" href="css/style.css?v=20261027003910">
+<script src="vendor/planck.min.js?v=20261027003910"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261027003910" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
 
 <div id="menu" class="screen hidden">
-  <h1>Draw<br>Bridge</h1>
-  <div id="levels"></div>
-  <div id="themes"></div>
-  <button id="likedBtn" class="big">👍 0</button>
+  <h1>LEVEL 0</h1>
+  <p class="sub">you noclipped out of reality.<br>find the exit. try to keep your limbs.</p>
+  <button id="play" class="big">ENTER</button>
+  <div id="best"></div>
+  <button id="likedBtn" class="big alt">👍 0</button>
 </div>
 
 <div id="hud" class="hidden">
   <button id="back" class="round" aria-label="Back">←</button>
-  <div id="lvname"></div>
-  <button id="theme" class="round" aria-label="Style">🎨</button>
-  <div id="meter"><i></i></div>
+  <div id="dist"></div>
+  <div id="meter" aria-label="Blood"><i></i></div>
 </div>
 
-<div id="tools" class="hidden">
-  <button id="undo" class="round" aria-label="Undo">↶</button>
-  <button id="clear" class="round" aria-label="Clear">✕</button>
-  <button id="go" class="go">GO</button>
+<div id="pad" class="hidden">
+  <div class="lr"><button id="left" class="pad" aria-label="Left">◀</button><button id="right" class="pad" aria-label="Right">▶</button></div>
+  <button id="jump" class="pad" aria-label="Jump">⤒</button>
 </div>
 
 <div id="result" class="hidden">
   <div id="resEmoji"></div>
+  <div id="resText"></div>
   <div class="row">
     <button id="like" class="round xl" aria-label="Like">👍</button>
     <button id="retry" class="round xl" aria-label="Retry">↺</button>
-    <button id="next" class="round xl" aria-label="Next level">→</button>
   </div>
 </div>
 
@@ -58,6 +57,6 @@ fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.tex
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=20261027002126"></script>
+<script type="module" src="js/app.js?v=20261027003910"></script>
 </body>
 </html>

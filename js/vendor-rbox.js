@@ -1,1 +1,1 @@
-export { RoundedBoxGeometry } from '../vendor/addons/RoundedBoxGeometry.js?v=20261027002126';
+export { RoundedBoxGeometry } from '../vendor/addons/RoundedBoxGeometry.js?v=20261027003910';

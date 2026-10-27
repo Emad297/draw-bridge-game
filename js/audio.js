@@ -1,4 +1,4 @@
-// Sound: real recorded impacts/explosions (Kenney, CC0 — see sfx/) layered with synthesized engine, tyres, fire and wind.
+// Sound: real recorded impacts/explosions (Kenney, CC0 — see sfx/) layered with synthesized gore, hum and heartbeat.
 // Everything runs through one graph per AudioContext, so the same code also renders offline into the exported video.
 const NAMES = { metalH: 5, metalM: 5, metalL: 5, rock: 5, ink: 5, thud: 5, plate: 5, pebble: 5, glass: 5, boom: 5, boomLow: 2 };
 const bufs = {}; let live = null, G = null, offT = null, loading = null;
@@ -12,15 +12,11 @@ function graph(ctx){
   const verb = ctx.createConvolver(); verb.buffer = ir; const wet = ctx.createGain(); wet.gain.value = .32; verb.connect(wet).connect(master);
   const noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = noise.getChannelData(0); let b = 0; for (let i = 0; i < nd.length; i++){ const w = Math.random() * 2 - 1; b = (b + .02 * w) / 1.02; nd[i] = w * .5 + b * 3; }
   const g = { ctx, master, verb, noise, out };
-  // continuous layers
+  // continuous layers: the fluorescent hum of the backrooms, a room-tone rumble, and a heartbeat that gets louder as you bleed
   const loop = (filterType, f, q) => { const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true; const fl = ctx.createBiquadFilter(); fl.type = filterType; fl.frequency.value = f; fl.Q.value = q; const gn = ctx.createGain(); gn.gain.value = 0; s.connect(fl).connect(gn).connect(master); s.start(); return { fl, gn }; };
-  g.wind = loop('lowpass', 380, .4); g.wind.gn.gain.value = .05;
-  g.tire = loop('bandpass', 420, .8); g.fireL = loop('lowpass', 900, .5); g.saw = null;
-  // engine: two detuned saws through a soft clipper and a low-pass, with a "putt" tremolo
-  const e1 = ctx.createOscillator(), e2 = ctx.createOscillator(); e1.type = e2.type = 'sawtooth'; const sh = ctx.createWaveShaper(), curve = new Float32Array(256); for (let i = 0; i < 256; i++){ const x = i / 128 - 1; curve[i] = Math.tanh(x * 2.5); } sh.curve = curve;
-  const elp = ctx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 420; elp.Q.value = 2; const trem = ctx.createGain(), lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfoG.gain.value = .35; lfo.connect(lfoG).connect(trem.gain); trem.gain.value = .65;
-  const eg = ctx.createGain(); eg.gain.value = 0; e1.connect(sh); e2.connect(sh); sh.connect(elp).connect(trem).connect(eg).connect(master); [e1, e2, lfo].forEach(o => o.start());
-  g.eng = { e1, e2, lfo, elp, eg };
+  g.room = loop('lowpass', 220, .5);
+  const hum = ctx.createGain(); hum.gain.value = 0; hum.connect(master); g.hum = hum;
+  for (const [f, a] of [[120, .5], [240, .25], [360, .12], [1080, .03]]){ const o = ctx.createOscillator(), og = ctx.createGain(); o.type = f > 500 ? 'square' : 'sine'; o.frequency.value = f; og.gain.value = a; o.connect(og).connect(hum); o.start(); }
   return g;
 }
 export function initAudio(){
@@ -46,10 +42,11 @@ function sub(f0, f1, dur, gain, delay = 0){ if (!on()) return; const c = G.ctx, 
 
 // ---- events
 export function hit(a, b, v, pan){ const m = [a, b], has = k => m.includes(k), k = clamp(v / 9, .05, 1);
-  if (has('metal')) play(v > 6 ? 'metalH' : v > 3 ? 'metalM' : 'metalL', .25 + k * .6, 1, pan);
+  if (has('metal') && !has('flesh')) play(v > 6 ? 'metalH' : v > 3 ? 'metalM' : 'metalL', .25 + k * .6, 1, pan);
   else if (has('rock')) play(v > 4 ? 'rock' : 'pebble', .15 + k * .5, v > 4 ? 1 : 1.25, pan, 0, .25);
   else if (has('ink')) play('ink', .2 + k * .55, 1.1, pan);
-  else if (has('tire')){ if (v > 2.2) play('thud', .15 + k * .5, .8, pan, 0, .2); }
+  else if (has('flesh')){ play('thud', .2 + k * .6, .55, pan, 0, .15); if (v > 3) noiseHit(.1, .12 * k, 'lowpass', 700, 2, 200, pan); }
+  else if (has('plate')) play('plate', .2 + k * .5, 1, pan);
   else play('thud', .2 + k * .5, .7, pan); }
 export function boom(pan){ if (!on()) return; play('boom', 1, .85, pan, 0, .9); play('boomLow', 1, 1, pan * .5, 0, .6); sub(70, 28, 1.6, .9); noiseHit(2.2, .5, 'lowpass', 3200, .7, 140, pan);
   for (let i = 0; i < 7; i++) play(i % 2 ? 'pebble' : 'metalL', .25, .9 + Math.random() * .4, pan + (Math.random() - .5) * .6, .35 + Math.random() * 1.2, .3); }
@@ -65,16 +62,22 @@ export function whoosh(){ noiseHit(.35, .15, 'bandpass', 500, 2, 3500); }
 export function pop(){ play('plate', .25, 1.6, 0, 0, .1); }
 let lastSqueak = -1;
 export function squeak(){ if (!on() || now() - lastSqueak < .05) return; lastSqueak = now(); noiseHit(.07, .05, 'bandpass', 2200 + Math.random() * 2600, 5); }
-let crackleT = 0;
-// per-frame state of the continuous layers: engine, tyres, fire
-export function drive(d){ if (!G) return; const t = now(), e = G.eng, k = .08;
-  const running = d && d.on, rpm = running ? d.rpm : 0, f = 34 + Math.min(12, rpm) * 4.2;
-  e.e1.frequency.setTargetAtTime(f, t, k); e.e2.frequency.setTargetAtTime(f * 1.012, t, k); e.lfo.frequency.setTargetAtTime(f / 2, t, k); e.elp.frequency.setTargetAtTime(260 + rpm * 55, t, k);
-  e.eg.gain.setTargetAtTime(running ? .07 + Math.min(1, rpm / 9) * .06 : 0, t, .12);
-  const roll = d ? Math.min(1, d.roll / 9) : 0; G.tire.gn.gain.setTargetAtTime(roll * .22, t, .06); G.tire.fl.frequency.setTargetAtTime(250 + roll * 500, t, .1);
-  const fire = d ? d.fire : 0; G.fireL.gn.gain.setTargetAtTime(fire * .16, t, .2);
-  if (fire > 0 && on()){ crackleT += d.dt || 1 / 60; while (crackleT > 0){ crackleT -= 1 / (4 + fire * 18); noiseHit(.02 + Math.random() * .03, (.08 + Math.random() * .2) * fire, 'highpass', 1500 + Math.random() * 3000, .7, null, d.pan || 0, Math.random() * .05); } }
-  if (roll > .25 && on() && Math.random() < roll * .12) play('pebble', .06 * roll, 1.4, d.pan || 0, 0, 0); }
+// gore: wet squelch + crunch of bone
+export function gore(k, pan){ noiseHit(.22, .35 * k + .1, 'lowpass', 900, 2, 180, pan); play('thud', .5 + k * .4, .55, pan, 0, .2); noiseHit(.05, .3 * k, 'highpass', 1800, .8, null, pan, .01); play('ink', .5 * k, .7, pan, .02, .1); squirt(pan, .05); }
+function squirt(pan, delay = 0){ noiseHit(.35, .12, 'bandpass', 2400, 3, 700, pan, delay); }
+export function squish(k, pan){ sub(110, 40, .3, .5 * k); noiseHit(.5, .5 * k, 'lowpass', 1200, 1.5, 120, pan); play('thud', .9, .45, pan, 0, .3); for (let i = 0; i < 5; i++) noiseHit(.08, .18, 'lowpass', 700 + Math.random() * 600, 2, 200, pan + (Math.random() - .5) * .5, .05 + Math.random() * .4); }
+export function cut(pan){ play('metalH', .5, 1.3, pan, 0, .2); noiseHit(.25, .3, 'bandpass', 3200, 2, 900, pan); gore(.6, pan); }
+export function splat(k, pan){ noiseHit(.12, .1 + k * .25, 'lowpass', 800, 2, 200, pan); }
+export function slam(pan){ play('metalL', 1, .6, pan, 0, .6); play('boomLow', .5, 1.4, pan, 0, .4); sub(80, 35, .35, .6); }
+export function click(pan){ play('metalH', .5, 2.2, pan, 0, .1); noiseHit(.03, .3, 'highpass', 3000, 1, null, pan); }
+export function creak(pan){ play('plate', .35, .6, pan, 0, .2); play('pebble', .2, .8, pan, .05, .2); }
+export function step(pan){ noiseHit(.07, .06, 'lowpass', 500, 1, 150, pan); }
+export function jump(pan){ noiseHit(.12, .05, 'bandpass', 600, 1, 1200, pan); }
+export function dead(){ sub(60, 30, 1.6, .5); }
+let beatT = 0;
+// per-frame state of the continuous layers
+export function ambience(d){ if (!G) return; const t = now(), on2 = !!d; G.hum.gain.setTargetAtTime(on2 ? .022 + (Math.random() < .02 ? .03 : 0) : 0, t, .05); G.room.gn.gain.setTargetAtTime(on2 ? .04 : 0, t, .3);
+  const h = d ? d.heart : 0; if (h > .05 && on()){ beatT -= d.dt; if (beatT <= 0){ beatT = .9 - h * .45; sub(55, 35, .14, .25 + h * .5); sub(50, 32, .12, .2 + h * .4, .16); } } }
 
 // ---- offline rendering for the video export: sounds are scheduled into an OfflineAudioContext on a virtual clock
 export function offline(octx){ initAudio(); const saved = G; G = graph(octx); offT = 0; lastSqueak = -1;
