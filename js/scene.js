@@ -1,8 +1,8 @@
 // The 3D view: a backrooms corridor (yellow wallpaper, damp carpet, humming lights), the modular car (one mesh per
 // physics piece, so every split-off half shows up), the traps, sparks, smoke, fire, oil stains and debris — plus the follow camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027024250';
-import { createSim, TYPES, PROPS, PIT_Y, pitAt } from './physics.js?v=20261027024250';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027024443';
+import { createSim, TYPES, PROPS, PIT_Y, pitAt } from './physics.js?v=20261027024443';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const lerp = (a, b, t) => a + (b - a) * t, clamp01 = x => Math.min(1, Math.max(0, x));

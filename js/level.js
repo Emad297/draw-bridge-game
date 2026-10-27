@@ -15,8 +15,8 @@
 //     { type: 'barrel', x }                                  an explosive barrel
 // ============================================================================
 export const LEVEL = {
-  name: 'Level 0', start: 0, exit: 105, ceil: 3.2, length: [-6, 111],
-  pits: [{ x0: 32.4, x1: 35 }, { x0: 73, x1: 77, cover: true }],
+  name: 'Level 0', start: 0, exit: 106, ceil: 3.2, length: [-6, 112],
+  pits: [{ x0: 32.4, x1: 35 }, { x0: 74, x1: 78, cover: true }],
   hazards: [
     { type: 'wall', x: 7, cols: 2 },
     { type: 'crusher', x: 13, w: 1.8, period: 2.8, phase: 0 },
@@ -24,16 +24,16 @@ export const LEVEL = {
     { type: 'clutter', x0: 25.5, x1: 28.5, n: 4 },
     { type: 'barrel', x: 29.8 },
     { type: 'ball', x: 43, len: 2, amp: 1.55, period: 3.8, phase: 0 },
-    { type: 'crusher', x: 53, w: 1.6, period: 2.4, phase: 0 },
-    { type: 'crusher', x: 59.5, w: 1.6, period: 2.4, phase: .9 },
-    { type: 'slabs', x0: 67, x1: 71, trigger: 63.3 },
-    { type: 'flame', x: 84, period: 2.2, on: .9, phase: 0 },
-    { type: 'flame', x: 86.5, period: 2.2, on: .9, phase: 1.1 },
-    { type: 'mine', x: 90.5 },
-    { type: 'wall', x: 95.6, cols: 2 },
-    { type: 'saw', r: .7, path: [[100, .9], [100, 2.6]], period: 1.8, spin: 16 },
-    { type: 'barrel', x: 101.6 },
-    { type: 'barrel', x: 102.15 },
-    { type: 'wall', x: 103, cols: 1 },
+    { type: 'crusher', x: 54.5, w: 1.6, period: 2.4, phase: 0 },
+    { type: 'crusher', x: 61.5, w: 1.6, period: 2.4, phase: .9 },
+    { type: 'slabs', x0: 68, x1: 72, trigger: 64.3 },
+    { type: 'flame', x: 85, period: 2.2, on: .9, phase: 0 },
+    { type: 'flame', x: 87.5, period: 2.2, on: .9, phase: 1.1 },
+    { type: 'mine', x: 91.5 },
+    { type: 'wall', x: 96.6, cols: 2 },
+    { type: 'saw', r: .7, path: [[101, .9], [101, 2.6]], period: 1.8, spin: 16 },
+    { type: 'barrel', x: 102.6 },
+    { type: 'barrel', x: 103.15 },
+    { type: 'wall', x: 104, cols: 1 },
   ],
 };
