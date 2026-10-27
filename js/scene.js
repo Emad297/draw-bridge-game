@@ -1,11 +1,11 @@
 // The 3D diorama: towers, car, ink, hazards, clouds, flag, confetti — plus the camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027000339';
-import { mergeGeometries } from './vendor-bgu.js?v=20261027000339';
-import { Sky } from './sky.js?v=20261027000339';
-import { paintWall, paintGround } from './textures.js?v=20261027000339';
-import { buildWorld, fbm2 } from './world.js?v=20261027000339';
-import { terrain, floorY } from './physics.js?v=20261027000339';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027002126';
+import { mergeGeometries } from './vendor-bgu.js?v=20261027002126';
+import { Sky } from './sky.js?v=20261027002126';
+import { paintWall, paintGround } from './textures.js?v=20261027002126';
+import { buildWorld, fbm2 } from './world.js?v=20261027002126';
+import { terrain, floorY } from './physics.js?v=20261027002126';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp01 = x => Math.min(1, Math.max(0, x)), lerp = (a, b, t) => a + (b - a) * t;
@@ -34,7 +34,9 @@ function cliffBox(w, h, cx, cy, C){ const zf = C.zf ?? 2.5, zb = C.zb ?? -2.5, d
       p.setZ(i, z + wgt * ((CN(x * .3 + 50, y * .3 + 50) - .5) * 2.4 * rough + led * rough)); } }
   if (rough) g.computeVertexNormals(); return g; }
 // camera viewing angle (radians): azimuth around the vertical axis (negative = from the car's side) and elevation
-export const VIEW_AZ = -1.25, VIEW_EL = .55;
+// width (z) of the drawn bridge deck
+const DECK = 1.5;
+export const VIEW_AZ = -1.3, VIEW_EL = .62;
 const RNG = s => () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 
 export class Diorama {
@@ -47,7 +49,8 @@ export class Diorama {
     const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 110 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
     this.levelG = new THREE.Group(); scene.add(this.levelG);
     this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
-    this.cyl = new THREE.CylinderGeometry(.09, .09, 1, 10); this.cap = new THREE.SphereGeometry(.09, 10, 8);
+    // the drawing is a deck as wide as a road (the physics is still the 2D line down its middle); round joints fill the bends
+    this.cyl = new THREE.BoxGeometry(1, .2, DECK); this.cap = new THREE.CylinderGeometry(.1, .1, DECK, 12); this.cap.rotateX(Math.PI / 2);
     this.sky = new Sky(scene, VIEW_AZ); this.buildPen(); this.buildConfetti();
     this.plane = new THREE.Plane(V(0, 0, 1), 0); this.ray = new THREE.Raycaster();
     this.buildFx(); this.buildDebris();
@@ -225,9 +228,9 @@ export class Diorama {
     return { h }; }
   // ---------------- ink
   clearInk(){ while (this.inkG.children.length) this.inkG.remove(this.inkG.children[0]); this.strokeGs = []; }
-  beginStroke(x, y){ const g = new THREE.Group(); this.inkG.add(g); this.strokeGs.push(g); const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x, y, 0); c.scale.setScalar(1.2); g.add(c); return g; }
-  addInkSegment(x0, y0, x1, y1){ const g = this.strokeGs[this.strokeGs.length - 1], L = Math.hypot(x1 - x0, y1 - y0), m = new THREE.Mesh(this.cyl, this.inkM); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0); m.rotation.z = Math.atan2(y1 - y0, x1 - x0) - Math.PI / 2; m.scale.set(1, Math.max(.001, L), 1); m.castShadow = true;
-    const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x1, y1, 0); g.add(m, c); }
+  beginStroke(x, y){ const g = new THREE.Group(); this.inkG.add(g); this.strokeGs.push(g); const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x, y, 0); c.castShadow = c.receiveShadow = true; g.add(c); return g; }
+  addInkSegment(x0, y0, x1, y1){ const g = this.strokeGs[this.strokeGs.length - 1], L = Math.hypot(x1 - x0, y1 - y0), m = new THREE.Mesh(this.cyl, this.inkM); m.position.set((x0 + x1) / 2, (y0 + y1) / 2, 0); m.rotation.z = Math.atan2(y1 - y0, x1 - x0); m.scale.set(Math.max(.001, L), 1, 1);
+    const c = new THREE.Mesh(this.cap, this.inkM); c.position.set(x1, y1, 0); for (const o of [m, c]) o.castShadow = o.receiveShadow = true; g.add(m, c); }
   setInk(strokes, upto = Infinity){ this.clearInk(); let acc = 0, tip = null;
     for (const s of strokes){ if (acc >= upto) break; this.beginStroke(s[0][0], s[0][1]); tip = s[0];
       for (let i = 1; i < s.length; i++){ const [x0, y0] = s[i - 1], [x1, y1] = s[i], L = Math.hypot(x1 - x0, y1 - y0); if (acc + L <= upto){ this.addInkSegment(x0, y0, x1, y1); acc += L; tip = s[i]; } else { const k = (upto - acc) / L; const x = lerp(x0, x1, k), y = lerp(y0, y1, k); this.addInkSegment(x0, y0, x, y); acc = upto; tip = [x, y]; break; } } }
@@ -238,17 +241,18 @@ export class Diorama {
   // The camera looks at the level from a fixed three-quarter angle (start of the gap near and low, the flag far and high),
   // so a long canyon runs diagonally up a portrait screen and you see the depth of the world.
   // fit() finds the distance and aim that frame the level's view box as tightly as possible.
-  fit(){ const L = this.level, cam = this.camera, key = [L.id, cam.aspect, cam.fov, this.margin].join();
+  fit(){ const L = this.level, cam = this.camera, sa = this.safe || [0, 0], key = [L.id, cam.aspect, cam.fov, this.margin, ...sa].join();
     if (this.fitC && this.fitC.key === key) return this.fitC;
     const [vx, vy, vw, vh] = L.view, dir = V(Math.sin(VIEW_AZ) * Math.cos(VIEW_EL), Math.sin(VIEW_EL), Math.cos(VIEW_AZ) * Math.cos(VIEW_EL)), m = this.margin || 1.12;
-    const pts = []; for (const x of [vx - vw / 2, vx + vw / 2]) for (const y of [vy - vh / 2, vy + vh / 2]) for (const z of [-1, 1]) pts.push(V(x, y, z));
+    const pts = []; for (const x of [vx - vw / 2, vx + vw / 2]) for (const y of [vy - vh / 2, vy + vh / 2]) for (const z of [-.6, .6]) pts.push(V(x, y, z));
     const c = this.fitCam || (this.fitCam = new THREE.PerspectiveCamera()); c.copy(cam);
     const tv = Math.tan(cam.fov * Math.PI / 360), th = tv * cam.aspect, right = V(0, 0, 0), up = V(0, 0, 0), q = V(0, 0, 0);
     let tgt = V(vx, vy, 0), d = 40;
     for (let i = 0; i < 16; i++){ c.position.copy(tgt).addScaledVector(dir, d); c.lookAt(tgt); c.updateMatrixWorld();
       let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (const p of pts){ q.copy(p).project(c); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
       right.setFromMatrixColumn(c.matrixWorld, 0); up.setFromMatrixColumn(c.matrixWorld, 1);
-      tgt.addScaledVector(right, (x0 + x1) / 2 * th * d).addScaledVector(up, (y0 + y1) / 2 * tv * d); d *= Math.max((x1 - x0) / 2, (y1 - y0) / 2) * m; }
+      const yt = 1 - sa[0] * 2, yb = -1 + sa[1] * 2; // keep clear of the buttons: sa = [top, bottom] share of the screen
+      tgt.addScaledVector(right, (x0 + x1) / 2 * th * d).addScaledVector(up, ((y0 + y1) - (yt + yb)) / 2 * tv * d); d *= Math.max((x1 - x0) / 2, (y1 - y0) / (yt - yb)) * m; }
     return this.fitC = { key, tgt, d, dir }; }
   frameCamera(t, carPos, follow, winPush = 0, runT = 0){
     const [vx, vy, vw, vh] = this.level.view, cam = this.camera, F = this.fit();

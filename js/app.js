@@ -1,10 +1,10 @@
-import { LEVELS } from './levels.js?v=20261027000339';
-import { createSim, inkLength, fitPoint, DT } from './physics.js?v=20261027000339';
-import { Diorama } from './scene.js?v=20261027000339';
-import * as S from './audio.js?v=20261027000339';
-import { THEMES } from './themes.js?v=20261027000339';
-import { swatch } from './textures.js?v=20261027000339';
-import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027000339';
+import { LEVELS } from './levels.js?v=20261027002126';
+import { createSim, inkLength, fitPoint, DT } from './physics.js?v=20261027002126';
+import { Diorama } from './scene.js?v=20261027002126';
+import * as S from './audio.js?v=20261027002126';
+import { THEMES } from './themes.js?v=20261027002126';
+import { swatch } from './textures.js?v=20261027002126';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027002126';
 
 const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
 const q = v => Math.round(v * 100) / 100;
@@ -14,7 +14,7 @@ const saveLikes = () => { if (!store.set('dbg-likes', likes)){ likes.forEach((l,
 
 let ti = Math.max(0, THEMES.findIndex(t => t.id === store.get('dbg-theme', 'classic')));
 const themeOf = id => THEMES.find(t => t.id === id) || THEMES[0];
-const view = new Diorama($('#game'), THEMES[ti]);
+const view = new Diorama($('#game'), THEMES[ti]); view.safe = [.08, .1];
 const fit = () => view.size(innerWidth, innerHeight); addEventListener('resize', fit); fit();
 
 let mode = 'menu', li = 0, level = LEVELS[0], strokes = [], cur = null, sim = null, st = null, acc = 0, clock = 0, shake = 0, winAt = null, endAt = null, lastResult = null, likedThis = null, drawing = false;
