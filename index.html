@@ -6,17 +6,17 @@
 <meta name="theme-color" content="#c9b878">
 <title>Level 0</title>
 <script>/* if this page is an old cached copy, reload the newest version */
-fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261027003910' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
-<link rel="stylesheet" href="css/style.css?v=20261027003910">
-<script src="vendor/planck.min.js?v=20261027003910"></script>
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261027003910" } }</script>
+fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (v && v !== '20261027011124' && !location.search.includes('v=' + v)) location.replace(location.pathname + '?v=' + v + location.hash); }).catch(() => {});</script>
+<link rel="stylesheet" href="css/style.css?v=20261027011124">
+<script src="vendor/planck.min.js?v=20261027011124"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js?v=20261027011124" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
 
 <div id="menu" class="screen hidden">
   <h1>LEVEL 0</h1>
-  <p class="sub">you noclipped out of reality.<br>find the exit. try to keep your limbs.</p>
+  <p class="sub">you noclipped into the backrooms with a car.<br>reach the exit. the building wants it in pieces.</p>
   <button id="play" class="big">ENTER</button>
   <div id="best"></div>
   <button id="likedBtn" class="big alt">👍 0</button>
@@ -25,12 +25,12 @@ fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.tex
 <div id="hud" class="hidden">
   <button id="back" class="round" aria-label="Back">←</button>
   <div id="dist"></div>
-  <div id="meter" aria-label="Blood"><i></i></div>
+  <div id="meter" aria-label="Car left"><i></i></div>
 </div>
 
 <div id="pad" class="hidden">
-  <div class="lr"><button id="left" class="pad" aria-label="Left">◀</button><button id="right" class="pad" aria-label="Right">▶</button></div>
-  <button id="jump" class="pad" aria-label="Jump">⤒</button>
+  <div class="lr"><button id="left" class="pad" aria-label="Reverse">◀</button><button id="right" class="pad" aria-label="Gas">▶</button></div>
+  <button id="jump" class="pad" aria-label="Hop">⤒</button>
 </div>
 
 <div id="result" class="hidden">
@@ -57,6 +57,6 @@ fetch('version.txt?' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.tex
   </div>
 </div>
 
-<script type="module" src="js/app.js?v=20261027003910"></script>
+<script type="module" src="js/app.js?v=20261027011124"></script>
 </body>
 </html>

@@ -1,8 +1,8 @@
-import { LEVEL } from './level.js?v=20261027003910';
-import { createSim, DT, KEY } from './physics.js?v=20261027003910';
-import { View } from './scene.js?v=20261027003910';
-import * as S from './audio.js?v=20261027003910';
-import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027003910';
+import { LEVEL } from './level.js?v=20261027011124';
+import { createSim, DT, KEY } from './physics.js?v=20261027011124';
+import { View } from './scene.js?v=20261027011124';
+import * as S from './audio.js?v=20261027011124';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=20261027011124';
 
 const $ = s => document.querySelector(s), show = (el, v = true) => el.classList.toggle('hidden', !v);
 const store = { get(k, d){ try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } } };
@@ -25,7 +25,7 @@ addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) keys[k] = 0; }
 
 // ---------------- menu
 function updateLikeCount(){ $('#likedBtn').textContent = `👍 ${likes.length}`; $('#likedBtn').disabled = !likes.length; }
-function toMenu(){ mode = 'menu'; sim = null; st = null; S.ambience(null); [$('#hud'), $('#pad'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); updateLikeCount(); $('#best').textContent = best ? `best: ${best} m` : ''; view.reset(); }
+function toMenu(){ mode = 'menu'; sim = null; st = null; [$('#hud'), $('#pad'), $('#result'), $('#liked')].forEach(e => show(e, false)); show($('#menu')); updateLikeCount(); $('#best').textContent = best ? `best: ${best} m` : ''; view.reset(); }
 $('#play').onclick = () => play();
 
 // ---------------- a run
@@ -34,43 +34,50 @@ function play(){ S.initAudio(); mode = 'play'; sim = createSim(LEVEL); st = sim.
 $('#back').onclick = toMenu;
 $('#retry').onclick = () => play();
 // one place that turns physics events into sound and camera shake (used by the game and by the video export)
-function react(e, camX){ const [k, a, b, c, d] = e, pan = x => (x - camX) / 6;
+function react(e, camX){ const [k, a, b, c] = e, pan = x => Math.max(-1, Math.min(1, (x - camX) / 8));
   if (k === 'hit') S.hit(a, b, c, pan(e[4]));
-  if (k === 'boom'){ S.boom(pan(a)); return .5; }
+  if (k === 'boom'){ S.boom(pan(a), c); return .35 + c * .35; }
   if (k === 'crumble') S.crumble(c, pan(a));
-  if (k === 'slam'){ S.slam(pan(a)); return .12; }
-  if (k === 'sever'){ S.gore(e[6] === 'crush' ? 1 : .7, pan(a)); return .06; }
-  if (k === 'cut'){ S.cut(pan(a)); return .05; }
-  if (k === 'impale') S.gore(.8, pan(a));
-  if (k === 'squish'){ S.squish(c, pan(a)); return .25 * c; }
-  if (k === 'splat') S.splat(c, pan(a));
+  if (k === 'slam'){ S.slam(pan(a)); return .1; }
+  if (k === 'cut'){ S.cut(pan(a)); return .04; }
+  if (k === 'split'){ S.tear(pan(a)); return .05; }
+  if (k === 'snap') S.snap(pan(a));
+  if (k === 'partoff') S.partoff(pan(a));
+  if (k === 'shred') S.shred(pan(a));
+  if (k === 'glass') S.glass(pan(a));
+  if (k === 'crush'){ S.crush(pan(a)); return .2; }
+  if (k === 'dent'){ S.dent(a, pan(b)); return a * .08; }
+  if (k === 'pop') S.pop(pan(a));
+  if (k === 'impale') S.dent(.6, pan(a));
   if (k === 'click') S.click(pan(a));
   if (k === 'creak') S.creak(pan(a));
-  if (k === 'step') S.step(pan(a));
-  if (k === 'jump') S.jump(pan(a));
-  if (k === 'dead') S.dead();
+  if (k === 'hop') S.hop();
+  if (k === 'engine') S.engineDie();
+  if (k === 'leak') S.leak(pan(a));
   if (k === 'win') S.win();
   return 0; }
-function handle(evs, live){ const camX = st ? st.parts[0][0] : 0; for (const e of evs){ pending.push(e); shake = Math.max(shake, react(e, camX)); if (e[0] === 'end' && live) showResult(e[1]); } }
-const RES = { win: '🚪', dead: '💀', timeout: '⏳' };
-function showResult(r){ lastResult = r; mode = 'result'; const m = Math.max(0, Math.round(st.parts[0][0] - LEVEL.start)); if (m > best){ best = m; store.set('br-best', best); }
-  $('#resEmoji').textContent = RES[r] || '💀'; $('#resText').textContent = r === 'win' ? 'you got out' : `${m} m · ${({ head: 'lost your head', crushed: 'flattened', spikes: 'impaled', blood: 'bled out', boom: 'blown to bits', splat: 'splattered', fall: 'fell' })[st.cause] || 'dead'}`;
+// the car's continuous sounds (engine, tyres, fire) from one physics state
+const carSound = (s, inp, dt) => s && { scrape: s.scrape, on: s.power && !s.won, gas: !!(inp & (KEY.left | KEY.right)), rpm: s.rpm, speed: Math.abs(s.speed), grounded: s.grounded, fire: s.engineDead || s.fuse ? 1 : 0, dt };
+function handle(evs, live){ const camX = st ? st.car[0] : 0; for (const e of evs){ pending.push(e); shake = Math.max(shake, react(e, camX)); if (e[0] === 'end' && live) showResult(e[1]); } }
+const RES = { win: '🚪', boom: '🔥', wrecked: '💥', stuck: '🪤', timeout: '⏳' };
+function showResult(r){ lastResult = r; mode = 'result'; const m = Math.max(0, Math.round(st.car[0] - LEVEL.start)); if (m > best){ best = m; store.set('br-best', best); }
+  $('#resEmoji').textContent = RES[r] || '💀'; $('#resText').textContent = r === 'win' ? `you got out · ${Math.round(st.integrity * 100)}% of the car left` : `${m} m · ${r === 'boom' ? 'blown to pieces' : r === 'wrecked' ? 'wrecked' : r === 'stuck' ? 'stuck' : 'out of time'}`;
   $('#like').classList.remove('on'); show($('#pad'), false); show($('#result')); }
 $('#like').onclick = () => {
   if (likedThis){ likes = likes.filter(l => l.id !== likedThis); likedThis = null; $('#like').classList.remove('on'); saveLikes(); return; }
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6); likedThis = id;
-  likes.push({ id, inputs: packInputs(rec), result: lastResult, cause: st.cause, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
+  likes.push({ id, inputs: packInputs(rec), result: lastResult, caption: '', thumb: thumb() }); saveLikes(); $('#like').classList.add('on'); S.pop(); };
 // the button presses of a run, run-length encoded: "mask*count,mask*count,..."
 const packInputs = a => { const out = []; for (const m of a){ const l = out[out.length - 1]; if (l && l[0] === m) l[1]++; else out.push([m, 1]); } return out.map(([m, n]) => `${m}*${n}`).join(','); };
 const unpackInputs = s => { const a = []; for (const r of (s || '').split(',')){ if (!r) continue; const [m, n] = r.split('*').map(Number); for (let i = 0; i < n; i++) a.push(m); } return a; };
 function thumb(){ const c = document.createElement('canvas'), s = view.canvas, w = 240, h = Math.round(w * s.height / s.width); c.width = w; c.height = Math.min(h, 320); const g = c.getContext('2d'); g.drawImage(s, 0, (s.height - c.height * s.width / w) / 2, s.width, c.height * s.width / w, 0, 0, w, c.height); return c.toDataURL('image/jpeg', .7); }
-function hud(){ if (!st) return; $('#meter i').style.width = st.blood + '%'; $('#meter').classList.toggle('low', st.blood < 30); $('#dist').textContent = `${Math.max(0, Math.round(st.parts[0][0] - LEVEL.start))} / ${LEVEL.exit} m`; }
+function hud(){ if (!st) return; const k = Math.max(0, st.integrity) * 100; $('#meter i').style.width = k + '%'; $('#meter').classList.toggle('low', k < 30 || !st.power); $('#dist').textContent = `${Math.max(0, Math.round(st.car[0] - LEVEL.start))} / ${LEVEL.exit} m`; }
 
 // ---------------- main loop
-let last = performance.now();
+let last = performance.now(), lastInp = 0;
 function frame(now){ const dt = Math.min(.05, (now - last) / 1000); last = now; clock += dt;
-  if ((mode === 'play' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const inp = mode === 'play' && st.alive && !st.won ? input() : 0; rec.push(inp); const ev = sim.step(inp); handle(ev, mode === 'play'); acc -= DT; } st = sim.state(); hud(); }
-  if (mode !== 'export') S.ambience({ dt, run: st && st.alive && st.grounded ? Math.min(1, Math.abs(st.speed) / 3.6) : 0, heart: st && st.alive ? 1 - st.blood / 100 : 0 });
+  if ((mode === 'play' || mode === 'result') && sim){ acc += dt; let n = 0; while (acc >= DT && n++ < 6){ const inp = mode === 'play' && !st.won ? input() : 0; lastInp = inp; rec.push(inp); const ev = sim.step(inp); handle(ev, mode === 'play'); acc -= DT; } st = sim.state(); hud(); }
+  if (mode !== 'export'){ S.ambience(true); S.drive(mode === 'menu' ? null : carSound(st, lastInp, dt)); }
   shake *= Math.pow(.02, dt);
   if (mode !== 'export'){ view.render(clock, mode === 'menu' ? null : st, { shake, events: pending }); pending = []; }
   requestAnimationFrame(frame); }
@@ -82,7 +89,7 @@ $('#likedBack').onclick = toMenu;
 function openLiked(){ mode = 'liked'; show($('#menu'), false); show($('#liked')); renderLiked(); }
 function renderLiked(){ const box = $('#likeList'); box.innerHTML = '';
   likes.forEach((l, i) => { const d = document.createElement('div'); d.className = 'card';
-    d.innerHTML = `<img src="${l.thumb || ''}" alt=""><div class="meta"><b>${RES[l.result] || ''} ${l.result === 'win' ? 'escaped' : l.cause || ''}</b><input placeholder="caption" maxlength="60"></div><div class="ord"><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="del">✕</button></div>`;
+    d.innerHTML = `<img src="${l.thumb || ''}" alt=""><div class="meta"><b>${RES[l.result] || ''} ${({ win: 'escaped', boom: 'blown up', wrecked: 'wrecked', stuck: 'stuck' })[l.result] || ''}</b><input placeholder="caption" maxlength="60"></div><div class="ord"><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="del">✕</button></div>`;
     const inp = d.querySelector('input'); inp.value = l.caption || ''; inp.oninput = () => { l.caption = inp.value; saveLikes(); };
     d.querySelectorAll('button').forEach(b => b.onclick = () => { const a = b.dataset.a;
       if (a === 'up' && i > 0) [likes[i - 1], likes[i]] = [likes[i], likes[i - 1]];
@@ -105,7 +112,7 @@ function planClip(it, last){ const inputs = unpackInputs(it.inputs), sm = create
 async function pickVideo(){ if (!window.VideoEncoder) return null; const base = { width: VW, height: VH, bitrate: VBITRATE, framerate: FPS, bitrateMode: 'variable', latencyMode: 'quality' };
   for (const [codec, mux] of [['avc1.640034', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.420034', 'avc'], ['vp09.00.51.08', 'vp9']]){ const c = { ...base, codec, ...(mux === 'avc' ? { avc: { format: 'avc' } } : {}) }; try { if ((await VideoEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
 async function pickAudio(){ if (!window.AudioEncoder) return null; for (const [codec, mux, bitrate] of [['mp4a.40.2', 'aac', 256000], ['opus', 'opus', 192000]]){ const c = { codec, sampleRate: 48000, numberOfChannels: 2, bitrate }; try { if ((await AudioEncoder.isConfigSupported(c)).supported) return [c, mux]; } catch {} } return null; }
-function setupExport(){ S.initAudio(); mode = 'export'; S.ambience(null); show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out')); prog(0);
+function setupExport(){ S.initAudio(); mode = 'export'; S.drive(null); show($('#liked'), false); show($('#export')); show($('#vid'), false); show($('#expDone'), false); show($('#out')); prog(0);
   const out = $('#out'), g = out.getContext('2d'); out.width = VW; out.height = VH;
   if (!exporter){ exporter = new View(document.createElement('canvas'), LEVEL); exporter.size(VW, VH, 1); exporter.safe = [.06, .04]; }
   const k = VW / 720, compose = (cap, flash) => { g.drawImage(exporter.canvas, 0, 0, VW, VH);
@@ -114,11 +121,11 @@ function setupExport(){ S.initAudio(); mode = 'export'; S.ambience(null); show($
   return { out, compose }; }
 // renders one clip; `frame()` is awaited after every rendered frame
 async function playClip(p, i, compose, frame, sfx){ const D = exporter; D.reset(); const sm = createSim(LEVEL); let clk = 0, sh = 0;
-  for (let n = 0; n < p.frames; n++){ clk += 1 / FPS; sfx.at?.(); const evs = sm.step(p.inputs[n] || 0), s = sm.state(), camX = s.parts[0][0];
+  for (let n = 0; n < p.frames; n++){ clk += 1 / FPS; sfx.at?.(); const evs = sm.step(p.inputs[n] || 0), s = sm.state(), camX = s.car[0];
     for (const e of evs) sh = Math.max(sh, react(e, camX)); sh *= Math.pow(.02, 1 / FPS);
-    S.ambience({ dt: 1 / FPS, run: s.alive && s.grounded ? Math.min(1, Math.abs(s.speed) / 3.6) : 0, heart: s.alive ? 1 - s.blood / 100 : 0 });
+    S.ambience(true); S.drive(carSound(s, p.inputs[n] || 0, 1 / FPS));
     D.render(clk, s, { shake: sh, events: evs }); compose(p.it.caption, i ? 1 - ss(0, .3, clk) : 0); if (await frame()) return; }
-  S.ambience(null); }
+  S.drive(null); }
 async function exportVideo(items){
   if (!items.length || busy) return; busy = true; let cancel = false; $('#closeExp').onclick = () => { cancel = true; };
   try {

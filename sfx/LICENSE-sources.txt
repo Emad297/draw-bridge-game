@@ -1,0 +1,91 @@
+Sources of the recorded sound effects in this folder (besides the Kenney
+"Impact Sounds" files covered by LICENSE-kenney.txt).
+
+Every source below is CC0 1.0 / public domain. No attribution is required.
+Credits are optional; the authors would appreciate them:
+  "Additional sounds: Joseph SARDIN - BigSoundBank.com"
+  "Sounds: Nicholas A. Judy - The Designer's Choice"
+  OpenGameArt authors: rubberduck, blacklodgegames, AntumDeluge
+
+All files were trimmed, faded, normalized and converted to mono 44.1 kHz MP3.
+Files marked "layered" mix several of the listed recordings together.
+Times in [brackets] are the excerpt taken from the original file.
+
+Licenses
+--------
+[BSB]  BigSoundBank (author Joseph SARDIN). Free and royalty-free sounds under
+       CC0 1.0 / WTFPL / public domain dedication, commercial use allowed,
+       no attribution required: https://bigsoundbank.com/licenses.html
+       Original WAV files: https://bigsoundbank.com/UPLOAD/bwf-en/<id>.wav
+[TDC]  "The Designer's Choice UCS Collection" by Nicholas A. Judy on the
+       Internet Archive, CC0 1.0
+       (https://creativecommons.org/publicdomain/zero/1.0/). The item
+       description says: "All sound effects are available to you on a
+       complete royalty-free basis... You can credit me or not."
+[OGA]  OpenGameArt.org submissions licensed CC0 (shown on each page).
+
+Files
+-----
+crash0.mp3   [TDC] https://archive.org/details/Designers-Choice-Collection-Destruction
+             "DESTRCrsh-CU_Car Crash, Metal, Glass, Explosion, Falling Debris_Nicholas Judy_TDC.wav" [0.0-1.4 s]
+crash1.mp3   [TDC] https://archive.org/details/Designers-Choice-Collection-Destruction
+             "DESTRCrsh_Car Crash, Tires Screeching, Metal and Glass Explosion, Crash, Shatter, Tinkle_Nicholas Judy_TDC.wav" [3.58-5.0 s]
+crash2.mp3   layered:
+             [BSB] https://bigsoundbank.com/grinding-metal-barrier-closure-1-s2358.html (2358.wav, metal barn gate slamming)
+             [BSB] https://bigsoundbank.com/car-door-1-s0971.html (0971.wav, Peugeot 107 door slam, low-passed)
+             [BSB] https://bigsoundbank.com/fall-2-sheet-steel-bars-2-s1777.html (1777.wav)
+             [BSB] https://bigsoundbank.com/can-that-are-crushed-s0118.html (0118.wav)
+crash3.mp3   layered:
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLImpt-Samsung Galaxy Smartphone, CU_Giant Tub_Nicholas Judy_TDC.wav"
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLImpt-Samsung Galaxy Smartphone, CU_Air Conditioner Hit_Nicholas Judy_TDC.wav"
+             [BSB] https://bigsoundbank.com/glass-burst-s0148.html (0148.wav)
+             [OGA] https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx  (rubberduck) bfh1_metal_falling_02.ogg
+
+crunch0.mp3  [BSB] https://bigsoundbank.com/can-that-are-crushed-s0118.html (0118.wav, soda can crushed by foot)
+crunch1.mp3  [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLImpt-Samsung Galaxy Smartphone, CU_Air Conditioner Hit_Nicholas Judy_TDC.wav"
+crunch2.mp3  [OGA] https://opengameart.org/content/27-metal-audio-samples-sfx  (blacklodgegames) dull_metal_collision_02_44k_32bit_stereo.wav
+crunch3.mp3  [OGA] https://opengameart.org/content/100-cc0-metal-and-wood-sfx  (rubberduck) metal_sheet_03.ogg
+
+clang0.mp3   [BSB] https://bigsoundbank.com/falling-sheet-steel-bar-1-s1771.html (1771.wav)
+clang1.mp3   [BSB] https://bigsoundbank.com/falling-sheet-steel-bar-3-s1773.html (1773.wav)
+clang2.mp3   [BSB] https://bigsoundbank.com/iron-bar-falls-2-s0235.html (0235.wav)
+clang3.mp3   [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLImpt-Samsung Galaxy Smartphone, CU_Sign, Hit_Nicholas Judy_TDC.wav"
+
+shatter0.mp3 [BSB] https://bigsoundbank.com/mirror-explodes-s0387.html (0387.wav, 1 cm thick mirror)
+shatter1.mp3 [TDC] https://archive.org/details/Designers-Choice-Collection-Glass  "GLASBrk_Coca Cola Bottle Smash_Nicholas Judy_TDC.wav"
+shatter2.mp3 [BSB] https://bigsoundbank.com/broken-glass-of-champagne-s1591.html (1591.wav)
+
+scrape0.mp3  LOOP, layered:
+             [OGA] https://opengameart.org/content/scrapes  (AntumDeluge) scrape-3/4/5/7/8.wav (object dragged on cinder block), joined with crossfades
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLFric-Samsung Galaxy Smartphone, CU_Metal, Screech, Loud, Annoying_Nicholas Judy_TDC.wav" [8-12 s, -14 dB]
+screech0.mp3 LOOP  [BSB] https://bigsoundbank.com/screeching-tires-2-s2369.html (2369.wav) [0.15-1.7 s]
+engine0.mp3  LOOP  [TDC] https://archive.org/details/Designers-Choice-Collection-Vehicles
+             "VEHInt-Samsung Galaxy Smartphone, CU_Truck, Driving, Speeding_Nicholas Judy_TDC.wav" [40.0-42.7 s] (inside a truck while driving)
+engine1.mp3  LOOP  [BSB] https://bigsoundbank.com/small-gasoline-engine-s0966.html (0966.wav, Peugeot 107 1.0 L idling) [20.0-22.3 s]
+fire0.mp3    LOOP, layered:
+             [BSB] https://bigsoundbank.com/gasoline-fire-3-s1342.html (1342.wav, gasoline fire) [60-63.4 s]
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Fire  "FIREBurn-Samsung Galaxy Smartphone, CU_Campfire Crackling_Nicholas Judy_TDC.wav" [20-23.4 s]
+
+grind0.mp3   [BSB] https://bigsoundbank.com/grinder-cutting-s1118.html (1118.wav, 125 mm grinder cutting 8 mm steel sheet) [20.0-21.2 s]
+pop0.mp3     layered:
+             [BSB] https://bigsoundbank.com/balloon-burst-s0551.html (0551.wav, first burst)
+             [BSB] https://bigsoundbank.com/air-leak-s1486.html (1486.wav, tire-puncture air leak, -10 dB)
+bump0.mp3    [BSB] https://bigsoundbank.com/car-door-1-s0971.html (0971.wav, first door slam, low-passed)
+bump1.mp3    [BSB] https://bigsoundbank.com/car-trunk-2-s1525.html (1525.wav, trunk closing thump, low-passed)
+bump2.mp3    [BSB] https://bigsoundbank.com/body-fall-1-s2452.html (2452.wav, body fall on floor, low-passed)
+explode0.mp3 layered:
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Explosions  "EXPLMisc-CU_Explosion_Nicholas Judy_TDC.wav"
+             [BSB] https://bigsoundbank.com/fall-2-sheet-steel-bars-3-s1778.html (1778.wav, debris)
+explode1.mp3 layered:
+             [BSB] https://bigsoundbank.com/explosion-2-s1808.html (1808.wav, agricultural gas cannon at 10 m)
+             [BSB] https://bigsoundbank.com/gasoline-fire-1-s1340.html (1340.wav, gasoline catching fire)
+             [OGA] https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx  (rubberduck) bfh1_metal_falling_01.ogg, bfh1_glass_falling_02.ogg
+slam0.mp3    layered:
+             [BSB] https://bigsoundbank.com/pneumatic-brake-released-s1490.html (1490.wav, pneumatic hiss)
+             [BSB] https://bigsoundbank.com/grinding-metal-barrier-closure-1-s2358.html (2358.wav, metal gate slam)
+             [TDC] https://archive.org/details/Designers-Choice-Collection-Metal  "METLImpt-Samsung Galaxy Smartphone, CU_Giant Tub_Nicholas Judy_TDC.wav" (low-passed)
+
+debris0.mp3  [BSB] https://bigsoundbank.com/bullet-case-7-62mm-on-concrete-1-s1367.html (1367.wav, metal case on concrete)
+debris1.mp3  [BSB] https://bigsoundbank.com/clou-qui-tombe-sur-carrelage-s0461.html (0461.wav, framing nail dropping on tiles)
+debris2.mp3  [OGA] https://opengameart.org/content/75-cc0-breaking-falling-hit-sfx  (rubberduck) bfh1_glass_falling_02.ogg
+debris3.mp3  [BSB] https://bigsoundbank.com/stainless-steel-fork-falls-s0406.html (0406.wav, cutlery on terracotta floor)
