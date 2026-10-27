@@ -1,7 +1,7 @@
 // The world around the cliffs, different for every style: distant mountains / skylines, hills, vegetation, props,
 // and decorations on the cliff faces. Everything is merged into a handful of meshes (vertex colours) so phones stay fast.
 import * as THREE from 'three';
-import { mergeGeometries } from './vendor-bgu.js?v=20261024200358';
+import { mergeGeometries } from './vendor-bgu.js?v=20261027000339';
 
 const RNG = s => () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 export function fbm1(seed){ const r = RNG(seed), G = Array.from({ length: 512 }, r), s = t => t * t * (3 - 2 * t);

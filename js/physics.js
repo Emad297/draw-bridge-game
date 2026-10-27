@@ -185,7 +185,7 @@ export function createSim(level, rawStrokes){
       else if (exploded && t - boomAt > 3.2) ended = 'boom';
       else if (!exploded && !fire && fellAt > 0 && t - fellAt > 4) ended = 'fell';
       else if (!fire && t > 2 && t - prog.t > 2.5) ended = fellAt > 0 ? 'fell' : 'stuck';
-      else if (t > 16) ended = 'timeout';
+      else if (t > 30) ended = 'timeout';
       if (ended) ev.push(['end', ended]); }
     return ev;
   }

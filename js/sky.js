@@ -56,7 +56,9 @@ void main(){ vec4 t = texture2D(map, vUv); vec3 c = mix(shade, lit, t.r); c = mi
 const CLOUD_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 
 export class Sky {
-  constructor(scene){
+  // yaw = the camera's azimuth: the sun and the cloud field are turned to sit in front of the camera
+  constructor(scene, yaw = 0){
+    this.yaw = yaw; const field = new THREE.Group(); field.rotation.y = yaw; scene.add(field);
     this.u = { zenith: { value: new THREE.Color() }, mid: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, sunColor: { value: new THREE.Color() }, sunDir: { value: new THREE.Vector3(0, .2, -1) }, below: { value: new THREE.Color() }, sunSize: { value: .03 }, glow: { value: 1 }, stars: { value: 0 }, stripes: { value: 0 }, time: { value: 0 } };
     this.dome = new THREE.Mesh(new THREE.SphereGeometry(300, 48, 24), new THREE.ShaderMaterial({ uniforms: this.u, vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, fog: false, toneMapped: false }));
     this.dome.renderOrder = -10; this.dome.frustumCulled = false; scene.add(this.dome);
@@ -67,16 +69,16 @@ export class Sky {
       const m = new THREE.ShaderMaterial({ uniforms: { map: { value: tex[wisp ? 5 + i % 2 : i % 5] }, lit: this.cu.lit, shade: this.cu.shade, haze: this.cu.haze, hazeAmt: { value: Math.min(.35, (-z - 50) / 380) }, opacity: { value: wisp ? .55 : .97 } },
         vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, depthWrite: false, fog: false, toneMapped: false });
       const c = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); c.renderOrder = -5 + (z + 200) / 200; c.position.set((r() - .5) * 130, (wisp ? 18 : 2) + r() * 20 + (-z) * .06, z); if (r() < .5) c.scale.x = -1;
-      scene.add(c); this.clouds.push({ c, x0: c.position.x, v: (.3 + r() * .5) * (wisp ? 1.6 : 1) }); }
+      field.add(c); this.clouds.push({ c, x0: c.position.x, v: (.3 + r() * .5) * (wisp ? 1.6 : 1) }); }
   }
   setTheme(T){ const u = this.u, S = T.skyFx || {};
     u.zenith.value.set(T.sky[0]); u.mid.value.set(T.sky[1]); u.horizon.value.set(T.sky[2]); u.sunColor.value.set(S.sun || T.sun[0]);
-    const [az, el] = (S.at || [-6, 30]).map(v => v * Math.PI / 180); u.sunDir.value.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+    const [az0, el] = (S.at || [-6, 30]).map(v => v * Math.PI / 180), az = az0 - this.yaw; u.sunDir.value.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
     u.sunSize.value = (S.size ?? 1.6) * Math.PI / 180; u.glow.value = S.glow ?? 1; u.stars.value = T.stars ? 1 : 0; u.stripes.value = S.stripes ? 1 : 0;
     const lit = new THREE.Color(T.cloud), sky = new THREE.Color(T.sky[1]); this.cu.lit.value.copy(lit); this.cu.shade.value.copy(lit).lerp(sky, .5).multiplyScalar(S.shade ?? .66); this.cu.haze.value.set(T.sky[2]);
     const n = S.clouds ?? 30; this.clouds.forEach((o, i) => o.c.visible = i < 22 ? i < Math.min(22, n) : n > 22); }
   // colour of the sky right at the horizon straight ahead (same formula as the shader)
-  horizonAhead(){ const u = this.u, s = Math.max(0, -u.sunDir.value.z), g = u.glow.value * (.05 * s ** 3 + .35 * s ** 24 + .9 * s ** 400);
+  horizonAhead(){ const u = this.u, d = u.sunDir.value, s = Math.max(0, d.x * -Math.sin(this.yaw) - d.z * Math.cos(this.yaw)), g = u.glow.value * (.05 * s ** 3 + .35 * s ** 24 + .9 * s ** 400);
     return u.horizon.value.clone().multiplyScalar(1.18).add(u.sunColor.value.clone().multiplyScalar(g)); }
   fogColor(){ const c = this.horizonAhead(); this.u.below.value.copy(c); return c; }
   update(t, camera){ this.dome.position.copy(camera.position); this.u.time.value = t; for (const o of this.clouds){ o.c.position.x = ((o.x0 + t * o.v + 75) % 150 + 150) % 150 - 75; } }

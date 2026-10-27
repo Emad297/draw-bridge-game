@@ -1,11 +1,11 @@
 // The 3D diorama: towers, car, ink, hazards, clouds, flag, confetti — plus the camera.
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261024200358';
-import { mergeGeometries } from './vendor-bgu.js?v=20261024200358';
-import { Sky } from './sky.js?v=20261024200358';
-import { paintWall, paintGround } from './textures.js?v=20261024200358';
-import { buildWorld, fbm2 } from './world.js?v=20261024200358';
-import { terrain, floorY } from './physics.js?v=20261024200358';
+import { RoundedBoxGeometry } from './vendor-rbox.js?v=20261027000339';
+import { mergeGeometries } from './vendor-bgu.js?v=20261027000339';
+import { Sky } from './sky.js?v=20261027000339';
+import { paintWall, paintGround } from './textures.js?v=20261027000339';
+import { buildWorld, fbm2 } from './world.js?v=20261027000339';
+import { terrain, floorY } from './physics.js?v=20261027000339';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp01 = x => Math.min(1, Math.max(0, x)), lerp = (a, b, t) => a + (b - a) * t;
@@ -33,6 +33,8 @@ function cliffBox(w, h, cx, cy, C){ const zf = C.zf ?? 2.5, zb = C.zb ?? -2.5, d
     if (rough){ const t = (z - zc) / (d / 2), wgt = Math.sign(t) * Math.pow(Math.abs(t), 6), led = C.ledges ? Math.pow((y / 1.3 % 1 + 1) % 1, 4) * 1.2 : 0;
       p.setZ(i, z + wgt * ((CN(x * .3 + 50, y * .3 + 50) - .5) * 2.4 * rough + led * rough)); } }
   if (rough) g.computeVertexNormals(); return g; }
+// camera viewing angle (radians): azimuth around the vertical axis (negative = from the car's side) and elevation
+export const VIEW_AZ = -1.25, VIEW_EL = .55;
 const RNG = s => () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
 
 export class Diorama {
@@ -40,13 +42,13 @@ export class Diorama {
     this.canvas = canvas;
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05; r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    const scene = this.scene = new THREE.Scene(); this.camera = new THREE.PerspectiveCamera(36, 9 / 16, 2, 400);
+    const scene = this.scene = new THREE.Scene(); this.camera = new THREE.PerspectiveCamera(20, 9 / 16, 4, 900);
     scene.fog = new THREE.Fog('#8fa8ff', 60, 330); this.ambient = []; this.hemi = new THREE.HemisphereLight('#eef2ff', '#6a5a7a', 1.3); scene.add(this.hemi); this.pm = new THREE.PMREMGenerator(r);
-    const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
+    const sun = this.sun = new THREE.DirectionalLight('#fff4e0', 2.8); sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096); Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 110 }); sun.shadow.bias = -.0005; sun.shadow.normalBias = .05; scene.add(sun, sun.target);
     this.levelG = new THREE.Group(); scene.add(this.levelG);
     this.inkM = mat('#141414', { roughness: .35 }); this.inkG = new THREE.Group(); scene.add(this.inkG); this.inkSegs = [];
     this.cyl = new THREE.CylinderGeometry(.09, .09, 1, 10); this.cap = new THREE.SphereGeometry(.09, 10, 8);
-    this.sky = new Sky(scene); this.buildPen(); this.buildConfetti();
+    this.sky = new Sky(scene, VIEW_AZ); this.buildPen(); this.buildConfetti();
     this.plane = new THREE.Plane(V(0, 0, 1), 0); this.ray = new THREE.Raycaster();
     this.buildFx(); this.buildDebris();
     this.camState = null; if (theme) this.setTheme(theme);
@@ -233,19 +235,33 @@ export class Diorama {
   // pointer -> world point on the drawing plane
   toWorld(px, py){ const r = this.canvas.getBoundingClientRect(), v = new THREE.Vector2((px - r.left) / r.width * 2 - 1, -((py - r.top) / r.height) * 2 + 1); this.ray.setFromCamera(v, this.camera); const p = new THREE.Vector3(); return this.ray.ray.intersectPlane(this.plane, p) ? [p.x, p.y] : null; }
   // ---------------- camera
+  // The camera looks at the level from a fixed three-quarter angle (start of the gap near and low, the flag far and high),
+  // so a long canyon runs diagonally up a portrait screen and you see the depth of the world.
+  // fit() finds the distance and aim that frame the level's view box as tightly as possible.
+  fit(){ const L = this.level, cam = this.camera, key = [L.id, cam.aspect, cam.fov, this.margin].join();
+    if (this.fitC && this.fitC.key === key) return this.fitC;
+    const [vx, vy, vw, vh] = L.view, dir = V(Math.sin(VIEW_AZ) * Math.cos(VIEW_EL), Math.sin(VIEW_EL), Math.cos(VIEW_AZ) * Math.cos(VIEW_EL)), m = this.margin || 1.12;
+    const pts = []; for (const x of [vx - vw / 2, vx + vw / 2]) for (const y of [vy - vh / 2, vy + vh / 2]) for (const z of [-1, 1]) pts.push(V(x, y, z));
+    const c = this.fitCam || (this.fitCam = new THREE.PerspectiveCamera()); c.copy(cam);
+    const tv = Math.tan(cam.fov * Math.PI / 360), th = tv * cam.aspect, right = V(0, 0, 0), up = V(0, 0, 0), q = V(0, 0, 0);
+    let tgt = V(vx, vy, 0), d = 40;
+    for (let i = 0; i < 16; i++){ c.position.copy(tgt).addScaledVector(dir, d); c.lookAt(tgt); c.updateMatrixWorld();
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; for (const p of pts){ q.copy(p).project(c); x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
+      right.setFromMatrixColumn(c.matrixWorld, 0); up.setFromMatrixColumn(c.matrixWorld, 1);
+      tgt.addScaledVector(right, (x0 + x1) / 2 * th * d).addScaledVector(up, (y0 + y1) / 2 * tv * d); d *= Math.max((x1 - x0) / 2, (y1 - y0) / 2) * m; }
+    return this.fitC = { key, tgt, d, dir }; }
   frameCamera(t, carPos, follow, winPush = 0, runT = 0){
-    const [vx, vy, vw, vh] = this.level.view, cam = this.camera, vfov = cam.fov * Math.PI / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * cam.aspect);
-    const dist = Math.max(vw / 2 / Math.tan(hfov / 2), vh / 2 / Math.tan(vfov / 2)) * (this.margin || 1.12);
-    let tgt = V(vx, vy, 0);
+    const [vx, vy, vw, vh] = this.level.view, cam = this.camera, F = this.fit();
+    let tgt = F.tgt.clone();
     if (follow && carPos){ const low = Math.min(...this.level.solids.map(s => s[2])), cp = [Math.min(Math.max(carPos[0], vx - vw * .6), vx + vw * .6), Math.max(carPos[1], (this.floor ?? low - 9) + 3)];
-      const off = cp[1] < low - 3 || cp[1] > vy + vh / 2 - 1 || Math.abs(cp[0] - vx) > vw / 2 - 1; tgt = V(lerp(vx, cp[0], off ? .7 : .1), lerp(vy, cp[1], off ? .75 : .08), 0); }
-    if (winPush > 0) tgt.lerp(V(this.level.flag[0], this.level.flag[1] + 1, 0), winPush * .2);
+      const off = cp[1] < low - 3 || cp[1] > vy + vh / 2 - 1 || Math.abs(cp[0] - vx) > vw / 2 - 1; tgt.add(V((cp[0] - vx) * (off ? .5 : .08), (cp[1] - vy) * (off ? .6 : .06), 0)); }
+    if (winPush > 0) tgt.lerp(V(this.level.flag[0], this.level.flag[1] + 1, 0), winPush * .25);
     if (!this.camState || t < this.camState.t || t - this.camState.t > .25) this.camState = { tgt: tgt.clone(), t }; else { const k = 1 - Math.exp(-(t - this.camState.t) * 3.2); this.camState.tgt.lerp(tgt, k); this.camState.t = t; }
     // the same angle while drawing and at the start of the run, so the line never seems to jump; a gentle drift once it is going
-    const sway = ss(0, 4, runT), c = this.camState.tgt, az = .14 + Math.sin(runT * .23) * .04 * sway, el = .1 + Math.sin(runT * .17) * .02 * sway, d = dist * (1 - winPush * .08);
-    cam.position.set(c.x + Math.sin(az) * Math.cos(el) * d, c.y + Math.sin(el) * d, c.z + Math.cos(az) * Math.cos(el) * d); cam.lookAt(c.x, c.y, 0);
-    // the sun stays fixed for the whole level: a sun that follows the camera makes shadow edges shimmer
-    const [lx, ly] = this.level.view; this.sun.position.set(lx + 10, ly + 20, 18); this.sun.target.position.set(lx, ly - 4, 0); }
+    const sway = ss(0, 4, runT), c = this.camState.tgt, az = VIEW_AZ + Math.sin(runT * .23) * .04 * sway, el = VIEW_EL + Math.sin(runT * .17) * .02 * sway, d = F.d * (1 - winPush * .18);
+    cam.position.set(c.x + Math.sin(az) * Math.cos(el) * d, c.y + Math.sin(el) * d, c.z + Math.cos(az) * Math.cos(el) * d); cam.lookAt(c.x, c.y, c.z);
+    // the sun stays fixed for the whole level (from behind the camera's shoulder): a sun that follows the camera makes shadow edges shimmer
+    const [lx, ly] = this.level.view; this.sun.position.set(lx - 16, ly + 24, 20); this.sun.target.position.set(lx, ly - 4, 0); }
   // ---------------- draw one frame from a physics state (or the idle start state)
   render(t, st, opts = {}){
     const L = this.level, dt = this.fxT == null ? 0 : Math.min(.1, Math.max(0, t - this.fxT)); this.fxT = t;
